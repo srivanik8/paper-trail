@@ -8,11 +8,16 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import timedelta
 
-from .pipeline import build_sources, run
+from .dedup import DEFAULT_THRESHOLD
+from .pipeline import DEFAULT_DEDUP_WINDOW, build_sources, run
 from .render import format_summary, format_table
 from .sources import REGISTRY
+from .store import Store
 from .timeutil import isoformat_utc, parse_since
+
+DEFAULT_DB = "papertrail.db"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -53,9 +58,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="emit newline-delimited JSON instead of a table",
     )
     run_cmd.add_argument(
+        "--db",
+        default=DEFAULT_DB,
+        help=f"SQLite database recording what has been seen (default: {DEFAULT_DB})",
+    )
+    run_cmd.add_argument(
+        "--dedup-days",
+        type=int,
+        default=DEFAULT_DEDUP_WINDOW.days,
+        help=(
+            "how far back to look for stories already handled "
+            f"(default: {DEFAULT_DEDUP_WINDOW.days})"
+        ),
+    )
+    run_cmd.add_argument(
+        "--threshold",
+        type=int,
+        default=DEFAULT_THRESHOLD,
+        help=f"title similarity required to merge two items (default: {DEFAULT_THRESHOLD})",
+    )
+    run_cmd.add_argument(
+        "--new-only",
+        action="store_true",
+        help="show only stories no previous run reported",
+    )
+    run_cmd.add_argument(
         "--dry-run",
         action="store_true",
-        help="do not persist anything (day 1: nothing persists either way)",
+        help="read the store to deduplicate, but record nothing",
     )
     return parser
 
@@ -71,21 +101,36 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     sources = build_sources(args.source, min_points=args.min_points)
-    result = run(window, sources)
 
-    items = result.items[: args.limit] if args.limit > 0 else result.items
+    with Store(args.db) as store:
+        result = run(
+            window,
+            sources,
+            store,
+            dedup_window=timedelta(days=args.dedup_days),
+            threshold=args.threshold,
+            persist=not args.dry_run,
+        )
+
+    clusters = result.fresh if args.new_only else result.clusters
+    if args.limit > 0:
+        clusters = clusters[: args.limit]
 
     if args.json:
-        for item in items:
-            print(json.dumps(item.to_dict(), ensure_ascii=False))
+        for cluster in clusters:
+            payload = cluster.canonical.to_dict()
+            payload["cluster_id"] = cluster.cluster_id
+            payload["also_seen"] = cluster.also_seen
+            payload["seen_before"] = cluster.is_continuation
+            print(json.dumps(payload, ensure_ascii=False))
     else:
         print(f"window: since {isoformat_utc(result.since)}")
-        print(format_summary(len(result.items), result.per_source, result.errors))
+        print(format_summary(result))
         print()
-        print(format_table(items))
+        print(format_table(clusters))
 
     # A run where every source failed is a failed run.
-    if result.errors and not result.items:
+    if result.errors and not result.clusters:
         return 1
     return 0
 
