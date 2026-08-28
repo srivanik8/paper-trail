@@ -57,3 +57,27 @@ def test_matched_terms_are_deduplicated_and_lowercased():
 
 def test_matched_terms_ignores_none_and_empty():
     assert matched_terms(None, "") == []
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        # Research headlines carrying no vendor or model name. These were
+        # silently dropped until a two-run demo surfaced the gap.
+        "Interpretability results for sparse autoencoders",
+        "New alignment technique for reasoning models",
+        "Scaling laws for post-training",
+        "Chain-of-thought prompting revisited",
+        "Reducing hallucinations with retrieval",
+        "A mixture of experts architecture at 400B",
+        "Open-weight models catch up on reasoning",
+        "Knowledge distillation for smaller models",
+    ],
+)
+def test_research_vocabulary_is_matched(title):
+    assert is_relevant(title)
+
+
+def test_still_ignores_unrelated_headlines_after_widening():
+    assert not is_relevant("A history of the bicycle derailleur")
+    assert not is_relevant("Postgres 18 adds asynchronous IO")
