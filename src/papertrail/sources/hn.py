@@ -41,6 +41,7 @@ class HackerNews:
         min_points: int = 5,
         client: httpx.Client | None = None,
         timeout: float = 10.0,
+        **_ignored: object,
     ) -> None:
         """
         Args:
@@ -48,6 +49,7 @@ class HackerNews:
                 mostly noise at 0-2 points; this is the stage-1 signal floor.
             client: Reusable HTTP client. One is created per fetch if omitted.
             timeout: Per-request timeout in seconds.
+            _ignored: Absorbs pipeline-wide options this source does not use.
         """
         self.min_points = min_points
         self._client = client

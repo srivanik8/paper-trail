@@ -53,11 +53,11 @@ def test_running_twice_reports_nothing_new_the_second_time(hn, tmp_path, capsys)
     )
     db = str(tmp_path / "papertrail.db")
 
-    assert main(["run", "--db", db]) == 0
+    assert main(["run", "--source", "hn", "--db", db]) == 0
     first = capsys.readouterr().out
     assert "2 new, 0 seen before" in first
 
-    assert main(["run", "--db", db]) == 0
+    assert main(["run", "--source", "hn", "--db", db]) == 0
     second = capsys.readouterr().out
     assert "0 new, 2 seen before" in second
 
@@ -66,10 +66,10 @@ def test_new_only_hides_stories_already_reported(hn, tmp_path, capsys):
     hn.append(hit("1", "Mistral releases Large 3", points=300))
     db = str(tmp_path / "papertrail.db")
 
-    main(["run", "--db", db])
+    main(["run", "--source", "hn", "--db", db])
     capsys.readouterr()
 
-    assert main(["run", "--db", db, "--new-only"]) == 0
+    assert main(["run", "--source", "hn", "--db", db, "--new-only"]) == 0
     assert "no items" in capsys.readouterr().out
 
 
@@ -77,9 +77,9 @@ def test_dry_run_leaves_the_database_untouched(hn, tmp_path, capsys):
     hn.append(hit("1", "Mistral releases Large 3", points=300))
     db = str(tmp_path / "papertrail.db")
 
-    main(["run", "--db", db, "--dry-run"])
+    main(["run", "--source", "hn", "--db", db, "--dry-run"])
     capsys.readouterr()
-    main(["run", "--db", db, "--dry-run"])
+    main(["run", "--source", "hn", "--db", db, "--dry-run"])
     assert "1 new, 0 seen before" in capsys.readouterr().out
 
 
@@ -91,7 +91,7 @@ def test_duplicates_are_folded_and_the_other_source_is_named(hn, tmp_path, capsy
         ]
     )
 
-    assert main(["run", "--db", str(tmp_path / "p.db")]) == 0
+    assert main(["run", "--source", "hn", "--db", str(tmp_path / "p.db")]) == 0
     out = capsys.readouterr().out
     assert "fetched 2 -> 1 story" in out
     assert "1 folded in" in out
@@ -100,7 +100,7 @@ def test_duplicates_are_folded_and_the_other_source_is_named(hn, tmp_path, capsy
 def test_json_output_is_one_object_per_line(hn, tmp_path, capsys):
     hn.append(hit("1", "Mistral releases Large 3", points=300))
 
-    assert main(["run", "--db", str(tmp_path / "p.db"), "--json"]) == 0
+    assert main(["run", "--source", "hn", "--db", str(tmp_path / "p.db"), "--json"]) == 0
     payload = json.loads(capsys.readouterr().out.strip())
 
     assert payload["title"] == "Mistral releases Large 3"
@@ -113,10 +113,10 @@ def test_json_marks_a_story_a_previous_run_reported(hn, tmp_path, capsys):
     hn.append(hit("1", "Mistral releases Large 3", points=300))
     db = str(tmp_path / "p.db")
 
-    main(["run", "--db", db])
+    main(["run", "--source", "hn", "--db", db])
     capsys.readouterr()
 
-    main(["run", "--db", db, "--json"])
+    main(["run", "--source", "hn", "--db", db, "--json"])
     assert json.loads(capsys.readouterr().out.strip())["seen_before"] is True
 
 
@@ -129,7 +129,7 @@ def test_limit_caps_the_table(hn, tmp_path, capsys):
         ]
     )
 
-    main(["run", "--db", str(tmp_path / "p.db"), "--limit", "2"])
+    main(["run", "--source", "hn", "--db", str(tmp_path / "p.db"), "--limit", "2"])
     body = capsys.readouterr().out.split("TITLE")[1]
     assert (
         len([line for line in body.splitlines() if line.strip().startswith(("~", "1", "2", "3"))])
@@ -142,18 +142,31 @@ def test_a_totally_failed_run_exits_nonzero(monkeypatch, tmp_path):
         raise httpx.ConnectError("no route to host")
 
     monkeypatch.setattr("papertrail.sources.hn.httpx.Client", explode)
-    assert main(["run", "--db", str(tmp_path / "p.db")]) == 1
+    assert main(["run", "--source", "hn", "--db", str(tmp_path / "p.db")]) == 1
 
 
 def test_the_database_is_created_on_first_run(hn, tmp_path):
     hn.append(hit("1", "Mistral releases Large 3", points=300))
     db = tmp_path / "nested" / "papertrail.db"
 
-    assert main(["run", "--db", str(db)]) == 0
+    assert main(["run", "--source", "hn", "--db", str(db)]) == 0
     assert db.exists()
 
 
 def test_datetimes_leave_as_iso_utc(hn, tmp_path, capsys):
     hn.append(hit("1", "Mistral releases Large 3", points=300))
-    main(["run", "--db", str(tmp_path / "p.db")])
+    main(["run", "--source", "hn", "--db", str(tmp_path / "p.db")])
     assert "01-01 12:00" in capsys.readouterr().out
+
+
+def test_json_reports_provenance_found_on_any_cluster_member(hn, tmp_path, capsys):
+    """An arXiv link on HN resolves its own primary source through canonicalization."""
+    hn.append(
+        hit("1", "Sparse autoencoders scale to frontier models", points=300)
+        | {"url": "https://arxiv.org/pdf/2401.00001v2.pdf?utm_source=x"}
+    )
+
+    main(["run", "--source", "hn", "--db", str(tmp_path / "p.db"), "--json"])
+    payload = json.loads(capsys.readouterr().out.strip())
+    assert payload["url"] == "https://arxiv.org/pdf/2401.00001v2.pdf?utm_source=x"
+    assert payload["also_seen"] == []

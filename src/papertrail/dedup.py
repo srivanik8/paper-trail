@@ -141,6 +141,20 @@ class Cluster:
         return [self.canonical, *self.duplicates]
 
     @property
+    def primary_source_url(self) -> str | None:
+        """The paper or repo behind this story, from whichever member knows it.
+
+        The best-supported report is rarely the most informative one: a link
+        that reached the HN front page carries a score but no provenance, while
+        the arXiv entry for the same work carries provenance and no score. The
+        cluster is the thing that knows both.
+        """
+        for item in self.members:
+            if item.primary_source_url:
+                return item.primary_source_url
+        return None
+
+    @property
     def also_seen(self) -> list[str]:
         """Other sources that carried this story, deduplicated and ordered."""
         seen: dict[str, None] = {}

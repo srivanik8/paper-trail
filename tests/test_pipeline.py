@@ -63,7 +63,16 @@ def test_a_failing_source_is_recorded_and_the_run_continues():
 
 
 def test_build_sources_defaults_to_the_whole_registry():
-    assert [source.name for source in build_sources()] == ["hn"]
+    assert sorted(source.name for source in build_sources()) == ["arxiv", "hf", "hn"]
+
+
+def test_build_sources_can_select_one():
+    assert [source.name for source in build_sources(["hf"])] == ["hf"]
+
+
+def test_source_options_it_does_not_use_are_absorbed():
+    """min_points is meaningful to HN and meaningless elsewhere; nothing may reject it."""
+    assert len(build_sources(min_points=5)) == 3
 
 
 def test_build_sources_rejects_an_unknown_name():

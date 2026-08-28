@@ -121,6 +121,7 @@ def main(argv: list[str] | None = None) -> int:
             payload = cluster.canonical.to_dict()
             payload["cluster_id"] = cluster.cluster_id
             payload["also_seen"] = cluster.also_seen
+            payload["primary_source_url"] = cluster.primary_source_url
             payload["seen_before"] = cluster.is_continuation
             print(json.dumps(payload, ensure_ascii=False))
     else:

@@ -25,17 +25,18 @@ def _truncate(text: str, width: int) -> str:
 def format_table(clusters: list[Cluster], width: int | None = None) -> str:
     """Render clusters as a fixed-column table: signal, time, source, title.
 
-    A leading ``~`` marks a story a previous run already reported. A trailing
-    ``+src,src`` names the other outlets that carried it.
+    A leading ``~`` marks a story a previous run already reported, and a ``.``
+    marks one whose primary source is already known. A trailing ``+src,src``
+    names the other outlets that carried it.
     """
     if not clusters:
         return "no items"
 
     total = width or shutil.get_terminal_size((100, 24)).columns
-    # mark(1) + signal(7) + gap + time(16) + gap + source(6) + gap = 35 columns.
-    title_width = max(MIN_TITLE_WIDTH, total - 35)
+    # marks(2) + signal(7) + gap + time(16) + gap + source(6) + gap = 36 columns.
+    title_width = max(MIN_TITLE_WIDTH, total - 36)
 
-    header = f" {'SIGNAL':>7}  {'PUBLISHED (UTC)':<16}  {'SRC':<6}  TITLE"
+    header = f"  {'SIGNAL':>7}  {'PUBLISHED (UTC)':<16}  {'SRC':<6}  TITLE"
     lines = [header, "-" * min(total, len(header) + title_width - 5)]
 
     for cluster in clusters:
@@ -43,9 +44,12 @@ def format_table(clusters: list[Cluster], width: int | None = None) -> str:
         published = isoformat_utc(item.published_at)[5:16].replace("T", " ")
         also = f"  +{','.join(cluster.also_seen)}" if cluster.also_seen else ""
         mark = "~" if cluster.is_continuation else " "
+        # A dot means provenance is already known; day 3 resolves the rest.
+        provenance = "." if cluster.primary_source_url else " "
         title = _truncate(item.title, title_width - len(also))
         lines.append(
-            f"{mark}{item.raw_signal:>7.1f}  {published:<16}  {item.source:<6}  {title}{also}"
+            f"{mark}{provenance}{item.raw_signal:>7.1f}  {published:<16}  "
+            f"{item.source:<6}  {title}{also}"
         )
     return "\n".join(lines)
 

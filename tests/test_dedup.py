@@ -231,3 +231,32 @@ def test_comparison_is_against_the_canonical_member_not_the_last_joiner():
         ]
     )
     assert len(clusters) == 2
+
+
+def test_a_cluster_reports_a_primary_source_any_member_knows():
+    """The top-ranked report carries the score; a quieter one carries the paper."""
+    loud = Item(
+        title="Sparse autoencoders scale to frontier models",
+        url="https://news.example/story",
+        source="hn",
+        published_at=WHEN,
+        raw_signal=320.0,
+    )
+    quiet = Item(
+        title="Sparse autoencoders scale to frontier models",
+        url="https://arxiv.org/abs/2401.00001",
+        source="arxiv",
+        published_at=WHEN,
+        raw_signal=0.0,
+        primary_source_url="https://arxiv.org/abs/2401.00001",
+    )
+
+    (cluster,) = deduplicate([loud, quiet])
+    assert cluster.canonical is loud
+    assert cluster.canonical.primary_source_url is None
+    assert cluster.primary_source_url == "https://arxiv.org/abs/2401.00001"
+
+
+def test_a_cluster_with_no_provenance_anywhere_reports_none():
+    items = [make_item("Some story about agents and tools", "https://a.example/1")]
+    assert deduplicate(items)[0].primary_source_url is None
