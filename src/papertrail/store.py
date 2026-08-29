@@ -12,6 +12,11 @@ Two things live here, and the distinction matters:
     What actually went out, and in which digest. This is what stops the same
     story arriving four mornings running.
 
+``pages``
+    Bodies already fetched while resolving provenance, so a URL is retrieved
+    once and only once. Politeness is a correctness property here, not a
+    courtesy: the resolver reads other people's sites.
+
 Nothing here reaches the network and nothing here ranks. The store records
 decisions; it does not make them.
 """
@@ -28,9 +33,9 @@ from typing import Any
 
 from .ids import canonical_url
 from .models import Item
-from .timeutil import isoformat_utc, parse_iso, utcnow
+from .timeutil import isoformat_utc, parse_iso, to_utc, utcnow
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 #: Lifecycle of an item. ``new`` means "survived to be a candidate"; the rest
 #: record why it stopped, so a query can always answer "why didn't I see this?"
@@ -76,6 +81,26 @@ CREATE TABLE IF NOT EXISTS sends (
 );
 """
 
+#: Applied in order to a database created at an earlier version. Each entry
+#: must be safe to run exactly once, on a database that already holds data.
+_MIGRATIONS: dict[int, str] = {
+    2: """
+    CREATE TABLE IF NOT EXISTS pages (
+        url          TEXT PRIMARY KEY,
+        status       INTEGER NOT NULL,
+        content_type TEXT,
+        body         TEXT NOT NULL DEFAULT '',
+        error        TEXT,
+        fetched_at   TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS pages_fetched_at ON pages (fetched_at);
+
+    ALTER TABLE items ADD COLUMN evidence TEXT;
+    ALTER TABLE items ADD COLUMN provenance_via TEXT;
+    """,
+}
+
 
 class Store:
     """A SQLite-backed record of everything the pipeline has seen.
@@ -114,16 +139,35 @@ class Store:
         self.connection.close()
 
     def _migrate(self) -> None:
-        """Create the schema and record its version.
+        """Create the base schema, then apply any migrations this file is behind.
 
-        There is exactly one version so far, so this is create-if-absent. When
-        version 2 arrives it branches here on the stored value.
+        A brand-new database gets the base schema and then every migration in
+        order, so there is exactly one code path and it is the one that gets
+        exercised on every run.
         """
         with self.connection:
+            existing = self.connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'meta'"
+            ).fetchone()
+
             self.connection.executescript(_SCHEMA)
+            if existing is None:
+                self.connection.execute(
+                    "INSERT INTO meta (key, value) VALUES ('schema_version', '1')"
+                )
+
+            current = int(
+                self.connection.execute(
+                    "SELECT value FROM meta WHERE key = 'schema_version'"
+                ).fetchone()["value"]
+            )
+            for version in sorted(_MIGRATIONS):
+                if version > current:
+                    self.connection.executescript(_MIGRATIONS[version])
+                    current = version
+
             self.connection.execute(
-                "INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', ?)",
-                (str(SCHEMA_VERSION),),
+                "UPDATE meta SET value = ? WHERE key = 'schema_version'", (str(current),)
             )
 
     @property
@@ -273,6 +317,65 @@ class Store:
                 "SELECT status, COUNT(*) AS n FROM items GROUP BY status"
             )
         }
+
+    # --- page cache ---------------------------------------------------------
+
+    def cached_page(self, url: str, fresh_after: datetime | None = None) -> sqlite3.Row | None:
+        """Return a cached fetch for ``url``, or ``None``.
+
+        Args:
+            url: Canonical URL of the page.
+            fresh_after: Ignore entries fetched before this moment. Without it
+                any cached entry counts, however old.
+        """
+        row = self.connection.execute("SELECT * FROM pages WHERE url = ?", (url,)).fetchone()
+        if row is None:
+            return None
+        if fresh_after is not None and parse_iso(row["fetched_at"]) < to_utc(fresh_after):
+            return None
+        return row
+
+    def cache_page(
+        self,
+        url: str,
+        *,
+        status: int,
+        body: str = "",
+        content_type: str | None = None,
+        error: str | None = None,
+        now: datetime | None = None,
+    ) -> None:
+        """Record the outcome of fetching ``url``.
+
+        Failures are cached too, deliberately: a URL that timed out or returned
+        404 must not be retried on every run.
+        """
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO pages (url, status, content_type, body, error, fetched_at)
+                VALUES (?,?,?,?,?,?)
+                ON CONFLICT(url) DO UPDATE SET
+                    status       = excluded.status,
+                    content_type = excluded.content_type,
+                    body         = excluded.body,
+                    error        = excluded.error,
+                    fetched_at   = excluded.fetched_at
+                """,
+                (url, status, content_type, body, error, isoformat_utc(now or utcnow())),
+            )
+
+    def set_provenance(self, item_id: str, evidence: str, url: str | None, via: str | None) -> None:
+        """Record what an item's URL was found to point at."""
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE items
+                   SET evidence = ?, primary_source_url = ?, provenance_via = ?
+                 WHERE id = ?
+                """,
+                (evidence, url, via, item_id),
+            )
 
     @staticmethod
     def row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
