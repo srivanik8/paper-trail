@@ -2,34 +2,45 @@
 
 AI news, filtered by whether it can show its work.
 
-A daily digest that only surfaces items it can trace back to a primary source.
-This is **not** a fake-news detector — no model verifies truth. It scores
-**provenance and signal**: can a claim point at a paper, a repo or an official
-post, and does that artifact hold up when you look at it?
+## About
 
-## Status
+There is more AI news every morning than anyone can read, and the loudest items
+are reliably not the most substantial. paper-trail pulls from a handful of feeds
+and keeps only the stories it can trace back to something you could go and check
+for yourself: a paper, a repository, published model weights, or a post from the
+lab that actually did the work.
 
-Day 1 of 7 — see [`docs/plan.md`](docs/plan.md).
+It is **not** a fake-news detector. No model verifies truth, and pretending
+otherwise is where projects like this fall over. What it does is narrower and
+actually computable — it scores **provenance**: can this claim point at a real
+artifact, and did anyone independent carry the same story?
 
-- [x] **D1** Skeleton, common schema, Hacker News ingest
-- [x] **D2** SQLite store, URL canonicalization, fuzzy dedup
-- [x] **D3** Primary-source resolution
-- [ ] **D4** Repo and paper reality checks
-- [ ] **D5** LLM scoring on the survivors
-- [ ] **D6** HTML digest, email delivery
-- [ ] **D7** GitHub Actions schedule
+That distinction has teeth. On a typical run the highest-scoring item of the day
+gets thrown away — a widely-upvoted opinion piece with nothing behind it but the
+author's confidence — while a quieter announcement survives because its blog
+post links out to an arXiv paper. Everything discarded is kept in the database
+with the reason, so "why didn't I see this?" always has an answer.
 
-## Usage
+Right now it ingests, deduplicates, resolves provenance and prints a ranked
+table. Scoring the survivors with an LLM, rendering an HTML digest and mailing
+it on a schedule are the parts still to come.
+
+## Quick start
 
 ```bash
+git clone https://github.com/srivanik8/paper-trail
+cd paper-trail
 uv sync
-uv run papertrail run --since 24h --dry-run
+uv run papertrail run --since 24h
 ```
 
+That fetches the last 24 hours from Hacker News, Hugging Face daily papers and
+arXiv, collapses duplicates, resolves what it can, and prints what survived:
+
 ```
-fetched 4 -> 3 stories (3 new, 0 seen before, 0 folded in, 1 unsourced)
-evidence: paper 2, repo 1
-pages fetched: 2
+fetched 47 -> 12 stories (9 new, 3 seen before, 6 folded in, 29 unsourced)
+evidence: paper 5, repo 4, official_blog 2, model_weights 1
+pages fetched: 8
 
   SIGNAL  PUBLISHED     SRC     EVID  TITLE
 --------------------------------------------------------------------------------
@@ -38,19 +49,70 @@ pages fetched: 2
 ~  190.4  01-02 09:00   hn      pape  We trained a new reasoning model  +hf
 ```
 
-`~` a previous run already reported this &nbsp;·&nbsp; `EVID` what the story can
-be checked against &nbsp;·&nbsp; `+hf` other feeds that carried it.
+Reading a row: `~` means an earlier run already reported this story, `EVID` says
+what it can be checked against, and `+hf` names the other feeds that carried it.
 
-The 411-point post that isn't there was the highest-scoring item of the run. It
-went to `data/` with `reason = "no primary source"`, which is the entire point.
+State lives in `papertrail.db` next to you. Run it twice and the second run
+reports nothing new — that is the point of the database.
 
-Options: `--source` to restrict to one feed, `--new-only` to hide what you have
-already seen, `--db` for the store location, `--dedup-days` and `--threshold` to
-tune matching, `--no-fetch` to resolve from URLs alone, `--keep-unsourced` to see
-what the resolver misses, `--dry-run` to record nothing, `--json` for
-newline-delimited JSON.
+## What's in the repo
 
-### Scoring the classifier
+```
+src/papertrail/
+  models.py      Item — the one schema every source normalizes into
+  timeutil.py    UTC in, ISO-8601 out; naive datetimes are refused
+  ids.py         URL canonicalization and stable item ids
+  relevance.py   cheap keyword pass over titles, tuned for recall
+  dedup.py       fuzzy title clustering with a version veto
+  provenance.py  what kind of evidence a URL is, if any
+  fetcher.py     one polite, cached fetch per URL
+  extract.py     candidate links out of a fetched page
+  resolver.py    source -> URL -> page, in that order
+  audit.py       scoring the classifier against hand labels
+  store.py       SQLite: everything ever seen, including the rejects
+  pipeline.py    fan out, cluster, resolve, record
+  render.py      the terminal table
+  cli.py         argparse entry point
+  sources/
+    base.py         the Source protocol every ingester implements
+    hn.py           Hacker News via the Algolia search API
+    huggingface.py  daily papers
+    arxiv.py        cs.AI, cs.LG, cs.CL submissions
+
+data/
+  provenance_cases.jsonl   hand-labelled URLs the classifier is scored against
+
+tests/            349 tests, none of which touch the network
+docs/plan.md      the build plan this project is following
+```
+
+## How to run it
+
+The main command is `run`:
+
+```bash
+uv run papertrail run --since 24h          # the default
+uv run papertrail run --since 7d --limit 20
+uv run papertrail run --source hn          # one feed only; repeatable
+uv run papertrail run --json               # newline-delimited JSON
+```
+
+Useful flags:
+
+| Flag | What it does |
+|---|---|
+| `--since` | Lookback window: `24h`, `90m`, `7d`, `2w` |
+| `--new-only` | Hide stories an earlier run already reported |
+| `--keep-unsourced` | Keep stories with no primary source, to see what the resolver is missing |
+| `--no-fetch` | Resolve from URLs alone and never read a page — safe with no network |
+| `--dry-run` | Read the database to deduplicate, but write nothing back |
+| `--db` | Where the SQLite file lives (default `papertrail.db`) |
+| `--dedup-days` | How far back to look for stories already handled (default 7) |
+| `--threshold` | Title similarity required to merge two items (default 90) |
+| `--min-points` | Signal floor on Hacker News (default 5) |
+
+There is also an `audit` command, which scores the provenance classifier against
+the hand-labelled URLs in `data/`:
 
 ```bash
 uv run papertrail audit
@@ -70,92 +132,67 @@ official_blog       100.0%   100.0%   12
 none                100.0%   100.0%   37
 ```
 
-Cases live in `data/provenance_cases.jsonl`. They are hand-labelled URL *shapes*
-drawn from real-world patterns, so this is a regression guard and a calibration
-check — not a field measurement of live pages. Adding a case you expect to fail
-is the useful move; that is how the nine bugs below were found.
+Those cases are hand-labelled URL *shapes*, so this is a regression guard rather
+than a field measurement of live pages. The useful way to extend it is to add a
+case you expect to fail — that is how most of the classifier's bugs were found.
 
-## Layout
-
-```
-src/papertrail/
-  models.py      Item — the one schema every source normalizes into
-  ids.py         URL canonicalization and stable item ids
-  timeutil.py    UTC in, ISO-8601 out; naive datetimes are refused
-  relevance.py   cheap keyword pass, tuned for recall
-  dedup.py       fuzzy title clustering with a version veto
-  provenance.py  what kind of evidence a URL is, if any
-  extract.py     candidate links out of a fetched page
-  fetcher.py     one polite, cached fetch per URL
-  resolver.py    source -> URL -> page, in that order
-  audit.py       scoring the classifier against hand labels
-  store.py       SQLite: everything seen, including the rejects
-  pipeline.py    fan out, cluster, resolve, record
-  render.py      terminal table
-  cli.py         argparse entry point
-  sources/
-    base.py         the Source protocol
-    hn.py           Hacker News via the Algolia search API
-    huggingface.py  daily papers
-    arxiv.py        cs.AI, cs.LG, cs.CL submissions
-```
-
-## Design notes
-
-**One schema, enforced at the boundary.** `Item` normalizes its own timestamp on
-construction and refuses naive datetimes outright, so no later stage has to
-guess what timezone a value is in. Adding a source must never widen this shape.
-
-**Identity lives in one function.** `ids.canonical_url` is the only place that
-decides what "the same URL" means. Day 2 widens it — stripping tracking params,
-lowercasing hosts, unwrapping redirectors — without touching a single call site.
-
-**The keyword filter is tuned for recall, not precision.** A false positive
-costs one row in a table; a false negative loses a story forever. Day 3 drops
-anything without a resolvable primary source, which clears out the slop.
-
-**A broken feed never takes the run down.** Sources that raise are recorded in
-`RunResult.errors` and skipped.
-
-**No similarity threshold separates real duplicates from real distinctions.**
-Measured against real headline pairs, the worst genuine rewording scores 92 and
-the worst false merge scores 97 — they overlap, so no cut point works. The 97 is
-*"GPT-5 benchmark results published"* against *"GPT-4 benchmark results
-published"*: one character apart, different stories. In AI news the version
-number **is** the story, so it gets a categorical veto rather than a vote. Two
-titles whose numeric tokens disagree never merge, whatever they score.
-
-**Rejects are kept, with the reason.** `items` records everything ever seen,
-including what was dropped and why. A month of that is a labelled record of what
-the rubric decided, and the only way to tune it later.
-
-**A cluster knows more than its best member.** The report that reaches the HN
-front page carries a score but no provenance; the arXiv entry for the same work
-carries provenance and no score. `Cluster.primary_source_url` reads across every
-member, and `Resolver.resolve_cluster` tries members in rank order.
-
-**Resolution is ordered cheapest-first.** Ask the source (Hugging Face and arXiv
-hand over the paper for free), then the URL itself (most survivors settle here,
-with no network at all), and only then fetch the page. Anything still unresolved
-is recorded and dropped before the LLM stage exists to cost money.
-
-**Navigation links are not evidence.** Extraction skips `nav`, `header`, `footer`
-and `aside`, and drops links back into the page's own host. Without that, every
-article on a site resolves to whatever repository that site links in its chrome.
-
-**The audit set is written to fail.** A case file that only contains what the
-classifier already handles scores 100% and measures nothing. Adding eighteen
-cases chosen to break it dropped accuracy to 88.5% and exposed four false
-positives — every lab's *careers* page was being read as an official
-announcement — plus four missing journal hosts and a Hugging Face collection
-misread as weights.
-
-## Development
+To work on the code:
 
 ```bash
-uv run pytest        # 349 tests, no network
+uv run pytest
 uv run ruff check .
 uv run ruff format .
 ```
 
-Tests use `httpx.MockTransport`, so the suite never touches the network.
+## How it works
+
+Four stages, each cheaper than the one after it.
+
+**Ingest.** Each source turns a remote API into the same `Item` shape:
+`{title, url, source, published_at, raw_signal, primary_source_url}`. Sources
+handle their own pagination and rate limiting, and normalize timestamps to UTC
+before returning. `Item` refuses a naive datetime outright rather than guessing
+a timezone, so nothing downstream has to wonder. A source that fails is recorded
+and skipped — one broken feed never takes the run down.
+
+**Deduplicate.** The same launch shows up on three feeds under three headlines
+pointing at three URLs. URL identity is handled first, by canonicalization:
+lowercase the host, strip tracking parameters, drop the fragment, fold every
+arXiv URL for one paper onto its abstract page. Then titles are compared fuzzily
+so that "Mistral releases Large 3" and "Mistral has released Large 3, its new
+flagship model" collapse into one story with the highest-signal report as its
+canonical member.
+
+That comparison needed more care than a similarity threshold. Measured against
+real headline pairs, the worst genuine rewording scores 92 and the worst *false*
+merge scores 97 — they overlap, so no cut point separates them. The 97 is
+"GPT-5 benchmark results published" against "GPT-4 benchmark results published":
+one character apart, different stories. In AI news the version number *is* the
+story, so it gets a categorical veto instead of a vote. Two headlines whose
+numbers disagree never merge, whatever they score.
+
+**Resolve.** For each surviving story, find the primary source, cheapest route
+first:
+
+1. **Ask the source.** Hugging Face and arXiv hand over the paper for free.
+2. **Ask the URL.** A link straight to arXiv, GitHub or a lab post needs no
+   network at all. Most survivors settle here.
+3. **Read the page.** Only now is anything fetched, and only its outbound links
+   are examined.
+
+Anything still unresolved is recorded with `reason = "no primary source"` and
+dropped. That is most of the volume, removed before any of it costs money.
+
+Link extraction skips `nav`, `header`, `footer` and `aside`, and ignores links
+back into the page's own host. Without that, every article on a site resolves to
+whatever repository the site happens to link in its chrome.
+
+The fetcher is written to be defensible, because it reads other people's
+websites: one fetch per URL ever with failures cached too, so a 404 is not
+retried daily; robots.txt honoured and cached per host; an honest User-Agent; a
+hard cap on body size; anything that isn't markup rejected before it is read.
+
+**Record.** Everything goes into SQLite — survivors, duplicates and rejects
+alike, each with its status and reason. Keeping the rejects is deliberate. After
+a month it is a labelled record of what the filter decided, which is the only
+way to tune the rubric later, and it is the more interesting half of the dataset.
