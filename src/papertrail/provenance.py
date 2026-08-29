@@ -86,9 +86,17 @@ _PAPER_HOSTS = {
     "aclanthology.org": re.compile(r"^/[\w.\-]+/?$"),
     "proceedings.mlr.press": re.compile(r"^/v\d+/"),
     "papers.nips.cc": re.compile(r"^/paper"),
+    "proceedings.neurips.cc": re.compile(r"^/paper"),
     "dl.acm.org": re.compile(r"^/doi/"),
     "biorxiv.org": re.compile(r"^/content/"),
+    "medrxiv.org": re.compile(r"^/content/"),
     "doi.org": re.compile(r"^/10\."),
+    "zenodo.org": re.compile(r"^/records?/"),
+    # Journals: only the article paths. These domains also carry news desks,
+    # which are reporting, not the result.
+    "nature.com": re.compile(r"^/articles/"),
+    "science.org": re.compile(r"^/doi/"),
+    "pnas.org": re.compile(r"^/doi/"),
 }
 
 # --- code -------------------------------------------------------------------
@@ -142,10 +150,54 @@ _CODE_RESERVED = frozenset(
 _HF_HOST = "huggingface.co"
 #: Namespaces on the model hub that are not a model or dataset repository.
 _HF_RESERVED = frozenset(
-    {"blog", "docs", "join", "learn", "login", "papers", "posts", "pricing", "spaces", "tasks"}
+    {
+        "blog",
+        "collections",
+        "docs",
+        "join",
+        "learn",
+        "login",
+        "papers",
+        "posts",
+        "pricing",
+        "spaces",
+        "tasks",
+    }
 )
 
 # --- lab blogs --------------------------------------------------------------
+
+#: First path segments on a lab domain that are corporate pages rather than
+#: research output. Without this, every lab's careers page is "evidence".
+_BLOG_NON_CONTENT = frozenset(
+    {
+        "about",
+        "api",
+        "careers",
+        "charter",
+        "company",
+        "contact",
+        "docs",
+        "enterprise",
+        "events",
+        "jobs",
+        "legal",
+        "login",
+        "policies",
+        "press",
+        "pricing",
+        "privacy",
+        "product",
+        "products",
+        "safety-standards",
+        "security",
+        "signup",
+        "support",
+        "team",
+        "terms",
+        "trust",
+    }
+)
 
 #: Hosts whose posts count as an official announcement. A path pattern narrows
 #: the general-purpose domains to their research sections.
@@ -238,10 +290,24 @@ def classify(url: str, via: str = "self") -> Provenance:
     if slug is not None:
         return Provenance(Evidence.REPO, f"https://{host}/{slug}", via)
 
-    if _matches(host, _BLOG_HOSTS, path):
+    if _matches(host, _BLOG_HOSTS, path) and _is_lab_post(path):
         return Provenance(Evidence.OFFICIAL_BLOG, canonical_url(url), via)
 
     return NONE
+
+
+def _is_lab_post(path: str) -> bool:
+    """True if a lab-domain path looks like a post rather than a corporate page.
+
+    A post lives at least two segments deep -- a section and an article -- so a
+    homepage never qualifies, and its section is not one of the corporate ones.
+    Lab domains are matched on host alone, which without this makes every
+    careers page an official announcement.
+    """
+    segments = [segment for segment in path.split("/") if segment]
+    if len(segments) < 2:
+        return False
+    return segments[0].lower() not in _BLOG_NON_CONTENT
 
 
 def best(candidates: list[Provenance]) -> Provenance:

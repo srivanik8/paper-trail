@@ -13,7 +13,7 @@ Day 1 of 7 — see [`docs/plan.md`](docs/plan.md).
 
 - [x] **D1** Skeleton, common schema, Hacker News ingest
 - [x] **D2** SQLite store, URL canonicalization, fuzzy dedup
-- [ ] **D3** Primary-source resolution
+- [x] **D3** Primary-source resolution
 - [ ] **D4** Repo and paper reality checks
 - [ ] **D5** LLM scoring on the survivors
 - [ ] **D6** HTML digest, email delivery
@@ -27,21 +27,53 @@ uv run papertrail run --since 24h --dry-run
 ```
 
 ```
-fetched 4 -> 2 stories (2 new, 0 seen before, 2 folded in) [hn 2]
+fetched 4 -> 3 stories (3 new, 0 seen before, 0 folded in, 1 unsourced)
+evidence: paper 2, repo 1
+pages fetched: 2
 
-   SIGNAL  PUBLISHED (UTC)   SRC     TITLE
-------------------------------------------------------------------------------
- .  320.9  01-02 09:00       hn      Sparse autoencoders scale to frontier models  +hf,arxiv
-    157.0  01-02 22:16       hn      Ask HN: what agent framework survives production?
-~   156.1  01-02 22:33       hn      Fine-tuning Llama 4 on a single consumer GPU
+  SIGNAL  PUBLISHED     SRC     EVID  TITLE
+--------------------------------------------------------------------------------
+   320.9  01-02 09:00   hn      pape  Sparse autoencoders scale to frontier models
+   280.5  01-02 09:00   hn      repo  Show HN: a tiny LLM inference runtime in C
+~  190.4  01-02 09:00   hn      pape  We trained a new reasoning model  +hf
 ```
 
-`~` a previous run already reported this &nbsp;·&nbsp; `.` its primary source is
-already known &nbsp;·&nbsp; `+hf,arxiv` other feeds that carried it.
+`~` a previous run already reported this &nbsp;·&nbsp; `EVID` what the story can
+be checked against &nbsp;·&nbsp; `+hf` other feeds that carried it.
+
+The 411-point post that isn't there was the highest-scoring item of the run. It
+went to `data/` with `reason = "no primary source"`, which is the entire point.
 
 Options: `--source` to restrict to one feed, `--new-only` to hide what you have
 already seen, `--db` for the store location, `--dedup-days` and `--threshold` to
-tune matching, `--dry-run` to record nothing, `--json` for newline-delimited JSON.
+tune matching, `--no-fetch` to resolve from URLs alone, `--keep-unsourced` to see
+what the resolver misses, `--dry-run` to record nothing, `--json` for
+newline-delimited JSON.
+
+### Scoring the classifier
+
+```bash
+uv run papertrail audit
+```
+
+```
+78 cases, 78 correct
+accuracy             100.0%
+resolution precision 100.0%   (of everything promoted above 'none')
+
+EVIDENCE         PRECISION   RECALL    N
+----------------------------------------
+paper               100.0%   100.0%   16
+repo                100.0%   100.0%    9
+model_weights       100.0%   100.0%    4
+official_blog       100.0%   100.0%   12
+none                100.0%   100.0%   37
+```
+
+Cases live in `data/provenance_cases.jsonl`. They are hand-labelled URL *shapes*
+drawn from real-world patterns, so this is a regression guard and a calibration
+check — not a field measurement of live pages. Adding a case you expect to fail
+is the useful move; that is how the nine bugs below were found.
 
 ## Layout
 
@@ -52,8 +84,13 @@ src/papertrail/
   timeutil.py    UTC in, ISO-8601 out; naive datetimes are refused
   relevance.py   cheap keyword pass, tuned for recall
   dedup.py       fuzzy title clustering with a version veto
+  provenance.py  what kind of evidence a URL is, if any
+  extract.py     candidate links out of a fetched page
+  fetcher.py     one polite, cached fetch per URL
+  resolver.py    source -> URL -> page, in that order
+  audit.py       scoring the classifier against hand labels
   store.py       SQLite: everything seen, including the rejects
-  pipeline.py    fan out, cluster, record
+  pipeline.py    fan out, cluster, resolve, record
   render.py      terminal table
   cli.py         argparse entry point
   sources/
@@ -95,12 +132,28 @@ the rubric decided, and the only way to tune it later.
 **A cluster knows more than its best member.** The report that reaches the HN
 front page carries a score but no provenance; the arXiv entry for the same work
 carries provenance and no score. `Cluster.primary_source_url` reads across every
-member.
+member, and `Resolver.resolve_cluster` tries members in rank order.
+
+**Resolution is ordered cheapest-first.** Ask the source (Hugging Face and arXiv
+hand over the paper for free), then the URL itself (most survivors settle here,
+with no network at all), and only then fetch the page. Anything still unresolved
+is recorded and dropped before the LLM stage exists to cost money.
+
+**Navigation links are not evidence.** Extraction skips `nav`, `header`, `footer`
+and `aside`, and drops links back into the page's own host. Without that, every
+article on a site resolves to whatever repository that site links in its chrome.
+
+**The audit set is written to fail.** A case file that only contains what the
+classifier already handles scores 100% and measures nothing. Adding eighteen
+cases chosen to break it dropped accuracy to 88.5% and exposed four false
+positives — every lab's *careers* page was being read as an official
+announcement — plus four missing journal hosts and a Hugging Face collection
+misread as weights.
 
 ## Development
 
 ```bash
-uv run pytest        # 200 tests, no network
+uv run pytest        # 349 tests, no network
 uv run ruff check .
 uv run ruff format .
 ```

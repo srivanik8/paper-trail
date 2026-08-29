@@ -209,3 +209,71 @@ def test_subdomains_of_a_lab_are_recognized():
 
 def test_provenance_can_be_constructed_directly():
     assert Provenance(Evidence.PAPER, "https://arxiv.org/abs/1").resolved is True
+
+
+# --- regressions found by the audit ----------------------------------------
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://openai.com/careers/research-engineer",
+        "https://www.anthropic.com/careers",
+        "https://openai.com/pricing",
+        "https://mistral.ai/",
+        "https://mistral.ai/news",
+    ],
+)
+def test_corporate_pages_on_a_lab_domain_are_not_announcements(url):
+    """Matching a lab on host alone made every careers page 'evidence'."""
+    assert classify(url).evidence is Evidence.NONE
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://openai.com/index/a-new-model",
+        "https://www.anthropic.com/news/an-announcement",
+        "https://deepmind.google/discover/blog/a-result",
+    ],
+)
+def test_real_lab_posts_still_resolve(url):
+    assert classify(url).evidence is Evidence.OFFICIAL_BLOG
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://proceedings.neurips.cc/paper_files/paper/2023/hash/abc.html",
+        "https://www.nature.com/articles/s41586-024-07487-w",
+        "https://www.science.org/doi/10.1126/science.abc1234",
+        "https://zenodo.org/records/10254395",
+    ],
+)
+def test_journals_and_archives_are_papers(url):
+    assert classify(url).evidence is Evidence.PAPER
+
+
+def test_a_journals_news_desk_is_not_a_paper():
+    """nature.com carries journalism as well as articles."""
+    assert classify("https://www.nature.com/articles/d41586-024-00001-1").evidence is Evidence.PAPER
+    assert classify("https://www.nature.com/news/a-story").evidence is Evidence.NONE
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://huggingface.co/collections/org/a-collection-65f",
+        "https://huggingface.co/spaces/org/a-demo",
+    ],
+)
+def test_hugging_face_pages_that_are_not_weights(url):
+    assert classify(url).evidence is not Evidence.MODEL_WEIGHTS
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["https://arxiv.org/list/cs.AI/recent", "https://arxiv.org/a/lecun_y_1"],
+)
+def test_arxiv_pages_that_are_not_papers(url):
+    assert classify(url).evidence is Evidence.NONE

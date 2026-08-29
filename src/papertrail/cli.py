@@ -10,6 +10,7 @@ import json
 import sys
 from datetime import timedelta
 
+from .audit import DEFAULT_CASES, audit, format_report, load_cases
 from .dedup import DEFAULT_THRESHOLD
 from .fetcher import Fetcher
 from .pipeline import DEFAULT_DEDUP_WINDOW, build_sources, run
@@ -99,12 +100,30 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="read the store to deduplicate, but record nothing",
     )
+
+    audit_cmd = subcommands.add_parser(
+        "audit", help="score the provenance classifier against hand-labelled cases"
+    )
+    audit_cmd.add_argument(
+        "--cases",
+        default=str(DEFAULT_CASES),
+        help="JSONL file of {url, expected, note} records",
+    )
+    audit_cmd.add_argument(
+        "--min-accuracy",
+        type=float,
+        default=0.0,
+        help="exit non-zero below this accuracy, for use in CI (default: 0)",
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     """Run the CLI. Returns a process exit code."""
     args = build_parser().parse_args(argv)
+
+    if args.command == "audit":
+        return _audit(args)
 
     try:
         window = parse_since(args.since)
@@ -151,6 +170,19 @@ def main(argv: list[str] | None = None) -> int:
     if result.errors and not result.stories:
         return 1
     return 0
+
+
+def _audit(args: argparse.Namespace) -> int:
+    """Run the classifier over a case file and print the score."""
+    try:
+        cases = load_cases(args.cases)
+    except (OSError, ValueError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    report = audit(cases)
+    print(format_report(report))
+    return 0 if report.accuracy >= args.min_accuracy else 1
 
 
 if __name__ == "__main__":

@@ -1,0 +1,78 @@
+{"url": "https://arxiv.org/abs/2401.00001", "expected": "paper", "note": "canonical abstract page"}
+{"url": "https://arxiv.org/pdf/2401.00001v3.pdf", "expected": "paper", "note": "pdf with version"}
+{"url": "https://arxiv.org/html/2401.00001v1", "expected": "paper", "note": "html rendering"}
+{"url": "http://www.arxiv.org/abs/2401.00001?utm_source=newsletter", "expected": "paper", "note": "tracking params and www"}
+{"url": "https://openreview.net/forum?id=Abc123Def", "expected": "paper", "note": "conference submission"}
+{"url": "https://aclanthology.org/2024.acl-long.42", "expected": "paper", "note": "ACL anthology"}
+{"url": "https://proceedings.mlr.press/v202/smith23a.html", "expected": "paper", "note": "PMLR proceedings"}
+{"url": "https://papers.nips.cc/paper_files/paper/2023/hash/abc.html", "expected": "paper", "note": "NeurIPS proceedings"}
+{"url": "https://dl.acm.org/doi/10.1145/3576915.3616600", "expected": "paper", "note": "ACM digital library"}
+{"url": "https://doi.org/10.1038/s41586-024-07487-w", "expected": "paper", "note": "DOI resolver"}
+{"url": "https://huggingface.co/papers/2403.09611", "expected": "paper", "note": "HF paper page maps to arXiv"}
+{"url": "https://www.biorxiv.org/content/10.1101/2024.01.01.573789v1", "expected": "paper", "note": "preprint server"}
+{"url": "https://github.com/ggerganov/llama.cpp", "expected": "repo", "note": "repository root"}
+{"url": "https://github.com/vllm-project/vllm/tree/main/vllm", "expected": "repo", "note": "deep link to a directory"}
+{"url": "https://github.com/huggingface/transformers/blob/main/README.md", "expected": "repo", "note": "deep link to a file"}
+{"url": "https://github.com/pytorch/pytorch/releases/tag/v2.3.0", "expected": "repo", "note": "release page"}
+{"url": "https://github.com/openai/whisper/issues/1234", "expected": "repo", "note": "issue link still names the repo"}
+{"url": "https://github.com/someone/project.git", "expected": "repo", "note": "clone URL"}
+{"url": "https://gitlab.com/group/project", "expected": "repo", "note": "gitlab"}
+{"url": "https://codeberg.org/someone/thing", "expected": "repo", "note": "codeberg"}
+{"url": "https://huggingface.co/meta-llama/Meta-Llama-3-8B-Instruct", "expected": "model_weights", "note": "model repository"}
+{"url": "https://huggingface.co/mistralai/Mistral-7B-Instruct-v0.3", "expected": "model_weights", "note": "model repository"}
+{"url": "https://huggingface.co/Qwen/Qwen2-72B", "expected": "model_weights", "note": "model repository"}
+{"url": "https://huggingface.co/datasets/allenai/c4", "expected": "model_weights", "note": "dataset repository"}
+{"url": "https://www.anthropic.com/news/some-announcement", "expected": "official_blog", "note": "lab announcement"}
+{"url": "https://openai.com/index/a-new-model/", "expected": "official_blog", "note": "lab announcement"}
+{"url": "https://deepmind.google/discover/blog/a-breakthrough/", "expected": "official_blog", "note": "lab announcement"}
+{"url": "https://ai.meta.com/blog/new-open-model/", "expected": "official_blog", "note": "lab announcement"}
+{"url": "https://mistral.ai/news/announcing-a-model/", "expected": "official_blog", "note": "lab announcement"}
+{"url": "https://blog.google/technology/ai/a-gemini-update/", "expected": "official_blog", "note": "research section of a general domain"}
+{"url": "https://www.databricks.com/blog/a-training-result", "expected": "official_blog", "note": "vendor engineering blog"}
+{"url": "https://research.google/blog/a-result/", "expected": "official_blog", "note": "lab blog"}
+{"url": "https://allenai.org/blog/a-release", "expected": "official_blog", "note": "lab blog"}
+{"url": "https://www.deepseek.com/news/model-release", "expected": "official_blog", "note": "lab blog"}
+{"url": "https://techcrunch.com/2026/01/05/startup-raises-series-b/", "expected": "none", "note": "trade press, not a primary source"}
+{"url": "https://www.theverge.com/2026/01/05/an-ai-feature", "expected": "none", "note": "trade press"}
+{"url": "https://venturebeat.com/ai/a-vendor-claims-a-benchmark/", "expected": "none", "note": "trade press repeating a claim"}
+{"url": "https://www.wired.com/story/agi-is-near/", "expected": "none", "note": "magazine feature"}
+{"url": "https://arstechnica.com/ai/2026/01/a-model-launch/", "expected": "none", "note": "trade press"}
+{"url": "https://medium.com/@someone/why-agents-will-change-everything-abc123", "expected": "none", "note": "personal essay"}
+{"url": "https://someone.substack.com/p/the-state-of-ai", "expected": "none", "note": "newsletter"}
+{"url": "https://twitter.com/someone/status/1234567890", "expected": "none", "note": "announcement thread, not the artifact"}
+{"url": "https://x.com/someone/status/1234567890", "expected": "none", "note": "same, new domain"}
+{"url": "https://www.linkedin.com/posts/someone_ai-activity-123", "expected": "none", "note": "social post"}
+{"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "expected": "none", "note": "video"}
+{"url": "https://news.ycombinator.com/item?id=39000000", "expected": "none", "note": "discussion, not the artifact"}
+{"url": "https://www.reddit.com/r/LocalLLaMA/comments/abc/a_thread/", "expected": "none", "note": "discussion"}
+{"url": "https://github.com/trending", "expected": "none", "note": "site page, not a repository"}
+{"url": "https://github.com/features/actions", "expected": "none", "note": "product page"}
+{"url": "https://github.com/pricing", "expected": "none", "note": "site page"}
+{"url": "https://github.com/someone", "expected": "none", "note": "an account is not a repository"}
+{"url": "https://huggingface.co/blog/a-community-post", "expected": "none", "note": "community blog, not weights"}
+{"url": "https://huggingface.co/pricing", "expected": "none", "note": "site page"}
+{"url": "https://blog.google/products/pixel/a-phone-launch/", "expected": "none", "note": "same domain, outside the research section"}
+{"url": "https://www.databricks.com/company/careers", "expected": "none", "note": "same domain, not the blog"}
+{"url": "https://startup.example/waitlist", "expected": "none", "note": "waitlist page"}
+{"url": "https://www.producthunt.com/posts/an-ai-tool", "expected": "none", "note": "launch listing"}
+{"url": "https://example.substack.com/p/import-ai-400", "expected": "none", "note": "newsletter issue"}
+{"url": "https://lu.ma/an-ai-meetup", "expected": "none", "note": "event page"}
+{"url": "https://docs.example.com/getting-started", "expected": "none", "note": "vendor documentation"}
+{"url": "https://openai.com/careers/research-engineer", "expected": "none", "note": "lab domain, but a jobs page is not a result"}
+{"url": "https://www.anthropic.com/careers", "expected": "none", "note": "lab domain, jobs page"}
+{"url": "https://mistral.ai/", "expected": "none", "note": "lab homepage carries no specific claim"}
+{"url": "https://openai.com/pricing", "expected": "none", "note": "lab domain, commercial page"}
+{"url": "https://proceedings.neurips.cc/paper_files/paper/2023/hash/abc.html", "expected": "paper", "note": "NeurIPS under its other hostname"}
+{"url": "https://www.nature.com/articles/s41586-024-07487-w", "expected": "paper", "note": "journal article"}
+{"url": "https://www.science.org/doi/10.1126/science.abc1234", "expected": "paper", "note": "journal article"}
+{"url": "https://zenodo.org/records/10254395", "expected": "paper", "note": "archived artifact with a DOI"}
+{"url": "https://arxiv.org/list/cs.AI/recent", "expected": "none", "note": "a listing page is not a paper"}
+{"url": "https://arxiv.org/a/lecun_y_1", "expected": "none", "note": "author page is not a paper"}
+{"url": "https://huggingface.co/spaces/org/a-demo", "expected": "none", "note": "a demo app is not the weights"}
+{"url": "https://huggingface.co/collections/org/a-collection-65f", "expected": "none", "note": "a collection is a bookmark list"}
+{"url": "https://gist.github.com/someone/abc123def456", "expected": "none", "note": "a gist has no history to check"}
+{"url": "https://github.com/orgs/huggingface/repositories", "expected": "none", "note": "org listing, not a repository"}
+{"url": "https://github.com/sponsors/someone", "expected": "none", "note": "site page"}
+{"url": "https://bitbucket.org/team/project", "expected": "repo", "note": "less common host"}
+{"url": "https://ai.googleblog.com/2024/01/a-result.html", "expected": "official_blog", "note": "lab blog, legacy hostname"}
+{"url": "https://blog.research.google/2024/01/a-result.html", "expected": "official_blog", "note": "lab blog subdomain"}
