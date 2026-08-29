@@ -11,8 +11,10 @@ import sys
 from datetime import timedelta
 
 from .dedup import DEFAULT_THRESHOLD
+from .fetcher import Fetcher
 from .pipeline import DEFAULT_DEDUP_WINDOW, build_sources, run
 from .render import format_summary, format_table
+from .resolver import Resolver
 from .sources import REGISTRY
 from .store import Store
 from .timeutil import isoformat_utc, parse_since
@@ -83,6 +85,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="show only stories no previous run reported",
     )
     run_cmd.add_argument(
+        "--no-fetch",
+        action="store_true",
+        help="resolve from URLs alone; never read a page",
+    )
+    run_cmd.add_argument(
+        "--keep-unsourced",
+        action="store_true",
+        help="keep stories with no primary source, to see what the resolver misses",
+    )
+    run_cmd.add_argument(
         "--dry-run",
         action="store_true",
         help="read the store to deduplicate, but record nothing",
@@ -103,35 +115,40 @@ def main(argv: list[str] | None = None) -> int:
     sources = build_sources(args.source, min_points=args.min_points)
 
     with Store(args.db) as store:
+        resolver = Resolver(None if args.no_fetch else Fetcher(store))
         result = run(
             window,
             sources,
             store,
+            resolver=resolver,
             dedup_window=timedelta(days=args.dedup_days),
             threshold=args.threshold,
             persist=not args.dry_run,
+            require_provenance=not args.keep_unsourced,
         )
 
-    clusters = result.fresh if args.new_only else result.clusters
+    stories = result.fresh if args.new_only else result.stories
     if args.limit > 0:
-        clusters = clusters[: args.limit]
+        stories = stories[: args.limit]
 
     if args.json:
-        for cluster in clusters:
-            payload = cluster.canonical.to_dict()
-            payload["cluster_id"] = cluster.cluster_id
-            payload["also_seen"] = cluster.also_seen
-            payload["primary_source_url"] = cluster.primary_source_url
-            payload["seen_before"] = cluster.is_continuation
+        for story in stories:
+            payload = story.canonical.to_dict()
+            payload["cluster_id"] = story.cluster.cluster_id
+            payload["also_seen"] = story.cluster.also_seen
+            payload["evidence"] = story.evidence.value
+            payload["primary_source_url"] = story.provenance.url
+            payload["provenance_via"] = story.provenance.via
+            payload["seen_before"] = story.cluster.is_continuation
             print(json.dumps(payload, ensure_ascii=False))
     else:
         print(f"window: since {isoformat_utc(result.since)}")
         print(format_summary(result))
         print()
-        print(format_table(clusters))
+        print(format_table(stories))
 
     # A run where every source failed is a failed run.
-    if result.errors and not result.clusters:
+    if result.errors and not result.stories:
         return 1
     return 0
 

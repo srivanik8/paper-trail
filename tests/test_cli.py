@@ -1,19 +1,23 @@
 import json
+from datetime import UTC, datetime
 
 import httpx
 import pytest
 
 from papertrail.cli import main
+from papertrail.fetcher import Fetcher
 from papertrail.sources.hn import API_URL
 
 WHEN = 1767268800  # 2026-01-01T12:00:00Z
 
 
 def hit(object_id: str, title: str, points: int = 100, url: str | None = None) -> dict:
+    # Default to a URL that is itself a primary source, so the resolver settles
+    # it without a fetch. Provenance is exercised on its own below.
     return {
         "objectID": object_id,
         "title": title,
-        "url": url or f"https://example.com/{object_id}",
+        "url": url or f"https://github.com/owner/repo-{object_id}",
         "points": points,
         "num_comments": 10,
         "created_at_i": WHEN,
@@ -170,3 +174,102 @@ def test_json_reports_provenance_found_on_any_cluster_member(hn, tmp_path, capsy
     payload = json.loads(capsys.readouterr().out.strip())
     assert payload["url"] == "https://arxiv.org/pdf/2401.00001v2.pdf?utm_source=x"
     assert payload["also_seen"] == []
+
+
+# --- provenance -------------------------------------------------------------
+
+
+def test_stories_with_no_primary_source_are_dropped(hn, tmp_path, capsys):
+    hn.extend(
+        [
+            hit("1", "Mistral releases Large 3", url="https://arxiv.org/abs/2401.00001"),
+            hit("2", "Ten predictions for AI in 2026", url="https://blog.example/predictions"),
+        ]
+    )
+
+    assert main(["run", "--source", "hn", "--db", str(tmp_path / "p.db"), "--no-fetch"]) == 0
+    out = capsys.readouterr().out
+    assert "1 unsourced" in out
+    assert "Mistral releases Large 3" in out
+    assert "Ten predictions" not in out
+
+
+def test_keep_unsourced_shows_what_the_resolver_missed(hn, tmp_path, capsys):
+    hn.append(hit("2", "Ten predictions for AI in 2026", url="https://blog.example/predictions"))
+
+    main(
+        ["run", "--source", "hn", "--db", str(tmp_path / "p.db"), "--no-fetch", "--keep-unsourced"]
+    )
+    out = capsys.readouterr().out
+    assert "Ten predictions" in out
+    assert "0 unsourced" in out
+
+
+def test_the_evidence_type_is_reported(hn, tmp_path, capsys):
+    hn.extend(
+        [
+            hit("1", "Sparse autoencoders scale up", url="https://arxiv.org/abs/2401.00001"),
+            hit("2", "A tiny inference runtime in C", url="https://github.com/owner/runtime"),
+            hit("3", "New open weights model released", url="https://huggingface.co/org/model"),
+        ]
+    )
+
+    main(["run", "--source", "hn", "--db", str(tmp_path / "p.db"), "--no-fetch"])
+    out = capsys.readouterr().out
+    assert "paper 1" in out and "repo 1" in out and "model_weights 1" in out
+
+
+def test_json_carries_evidence_and_how_it_was_found(hn, tmp_path, capsys):
+    hn.append(hit("1", "Sparse autoencoders scale up", url="https://arxiv.org/abs/2401.00001"))
+
+    main(["run", "--source", "hn", "--db", str(tmp_path / "p.db"), "--no-fetch", "--json"])
+    payload = json.loads(capsys.readouterr().out.strip())
+
+    assert payload["evidence"] == "paper"
+    assert payload["primary_source_url"] == "https://arxiv.org/abs/2401.00001"
+    assert payload["provenance_via"] == "self"
+
+
+def test_dropped_stories_are_recorded_with_their_reason(hn, tmp_path):
+    from papertrail.store import STATUS_REJECTED, Store
+
+    hn.append(hit("2", "Ten predictions for AI in 2026", url="https://blog.example/predictions"))
+    db = str(tmp_path / "p.db")
+
+    main(["run", "--source", "hn", "--db", db, "--no-fetch"])
+
+    with Store(db) as store:
+        rejected = [
+            row
+            for row in store.since(datetime(2020, 1, 1, tzinfo=UTC))
+            if row["status"] == STATUS_REJECTED
+        ]
+        assert len(rejected) == 1
+        assert rejected[0]["reason"] == "no primary source"
+
+
+def test_no_fetch_builds_no_fetcher_at_all(hn, tmp_path, monkeypatch):
+    """--no-fetch must be safe to run anywhere, including with no network."""
+
+    def explode(*args, **kwargs):
+        raise AssertionError("a fetcher was built despite --no-fetch")
+
+    monkeypatch.setattr("papertrail.cli.Fetcher", explode)
+    hn.append(hit("1", "A tiny inference runtime", url="https://github.com/owner/runtime"))
+
+    assert main(["run", "--source", "hn", "--db", str(tmp_path / "p.db"), "--no-fetch"]) == 0
+
+
+def test_without_no_fetch_a_fetcher_is_built(hn, tmp_path, monkeypatch):
+    built: list[int] = []
+    real = Fetcher
+
+    def spy(*args, **kwargs):
+        built.append(1)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr("papertrail.cli.Fetcher", spy)
+    hn.append(hit("1", "A tiny inference runtime", url="https://github.com/owner/runtime"))
+
+    main(["run", "--source", "hn", "--db", str(tmp_path / "p.db")])
+    assert built

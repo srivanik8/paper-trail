@@ -72,6 +72,8 @@ def test_matched_terms_ignores_none_and_empty():
         "A mixture of experts architecture at 400B",
         "Open-weight models catch up on reasoning",
         "Knowledge distillation for smaller models",
+        "AGI is closer than you think",
+        "Superintelligence and the alignment problem",
     ],
 )
 def test_research_vocabulary_is_matched(title):

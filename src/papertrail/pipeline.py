@@ -1,10 +1,15 @@
 """Runs the configured sources, deduplicates, and records what it saw.
 
 The order matters. Sources fan out, their items are clustered against both each
-other and the rolling window of what previous runs stored, and only then does
-anything get written. A story that arrived yesterday is recognised as a
-continuation rather than reported as new -- which is the whole point of having
-a store.
+other and the rolling window of what previous runs stored, each surviving
+cluster is resolved to a primary source, and only then does anything get
+written. A story that arrived yesterday is recognised as a continuation rather
+than reported as new -- which is the whole point of having a store.
+
+Resolution is where the volume goes. Clusters that cannot be traced to a paper,
+a repository, published weights or an official post are recorded with the
+reason and then dropped, so nothing downstream -- and nothing billable -- ever
+sees them.
 """
 
 from __future__ import annotations
@@ -14,9 +19,11 @@ from datetime import datetime, timedelta
 
 from .dedup import DEFAULT_THRESHOLD, Cluster, Known, deduplicate
 from .models import Item
+from .provenance import NONE, Evidence, Provenance, classify
+from .resolver import Resolver
 from .sources import REGISTRY
 from .sources.base import Source
-from .store import STATUS_DUPLICATE, STATUS_NEW, Store
+from .store import STATUS_DUPLICATE, STATUS_NEW, STATUS_REJECTED, Store
 from .timeutil import utcnow
 
 #: How far back to look for stories a previous run already handled. Longer than
@@ -25,33 +32,63 @@ DEFAULT_DEDUP_WINDOW = timedelta(days=7)
 
 
 @dataclass(frozen=True, slots=True)
+class Story:
+    """A cluster together with what it can be checked against."""
+
+    cluster: Cluster
+    provenance: Provenance = NONE
+
+    @property
+    def canonical(self) -> Item:
+        """The best-supported member of the cluster."""
+        return self.cluster.canonical
+
+    @property
+    def evidence(self) -> Evidence:
+        """What this story points at."""
+        return self.provenance.evidence
+
+    @property
+    def resolved(self) -> bool:
+        """True if this story points at something checkable."""
+        return self.provenance.resolved
+
+
+@dataclass(frozen=True, slots=True)
 class RunResult:
     """What one pipeline run produced."""
 
-    clusters: list[Cluster]
+    stories: list[Story]
     since: datetime
     errors: dict[str, str] = field(default_factory=dict)
     fetched: int = 0
+    dropped: list[Story] = field(default_factory=list)
+    pages_fetched: int = 0
+
+    @property
+    def clusters(self) -> list[Cluster]:
+        """Surviving clusters, best-supported first."""
+        return [story.cluster for story in self.stories]
 
     @property
     def items(self) -> list[Item]:
-        """Canonical item of every cluster, best-supported first."""
-        return [cluster.canonical for cluster in self.clusters]
+        """Canonical item of every surviving story, best-supported first."""
+        return [story.canonical for story in self.stories]
 
     @property
-    def fresh(self) -> list[Cluster]:
-        """Clusters this run saw for the first time."""
-        return [cluster for cluster in self.clusters if not cluster.is_continuation]
+    def fresh(self) -> list[Story]:
+        """Stories this run saw for the first time."""
+        return [story for story in self.stories if not story.cluster.is_continuation]
 
     @property
-    def continuing(self) -> list[Cluster]:
-        """Clusters a previous run already recorded."""
-        return [cluster for cluster in self.clusters if cluster.is_continuation]
+    def continuing(self) -> list[Story]:
+        """Stories a previous run already recorded."""
+        return [story for story in self.stories if story.cluster.is_continuation]
 
     @property
     def collapsed(self) -> int:
         """How many items were folded into another item's cluster."""
-        return sum(len(cluster.duplicates) for cluster in self.clusters)
+        return sum(len(story.cluster.duplicates) for story in self.stories)
 
     @property
     def per_source(self) -> dict[str, int]:
@@ -59,6 +96,14 @@ class RunResult:
         counts: dict[str, int] = {}
         for item in self.items:
             counts[item.source] = counts.get(item.source, 0) + 1
+        return counts
+
+    @property
+    def per_evidence(self) -> dict[str, int]:
+        """Surviving-story count keyed by evidence type."""
+        counts: dict[str, int] = {}
+        for story in self.stories:
+            counts[story.evidence.value] = counts.get(story.evidence.value, 0) + 1
         return counts
 
 
@@ -116,25 +161,32 @@ def run(
     sources: list[Source],
     store: Store | None = None,
     *,
+    resolver: Resolver | None = None,
     now: datetime | None = None,
     dedup_window: timedelta = DEFAULT_DEDUP_WINDOW,
     threshold: int = DEFAULT_THRESHOLD,
     persist: bool = True,
+    require_provenance: bool = True,
 ) -> RunResult:
-    """Fetch, deduplicate and record.
+    """Fetch, deduplicate, resolve and record.
 
     Args:
         window: How far back to ask sources for items.
         sources: Ingesters to run.
         store: Where to record what was seen. Without one the run is stateless,
             so every item looks new -- fine for a one-off, useless for a digest.
+        resolver: Finds each cluster's primary source. Without one, resolution
+            is skipped and nothing is dropped for lack of provenance.
         now: Clock override, for tests.
         dedup_window: How far back to look for stories already handled.
         threshold: Title similarity required to merge two items.
         persist: Set ``False`` to compute everything and write nothing.
+        require_provenance: Drop stories that resolve to nothing. Turning this
+            off is for inspecting what the resolver misses, not for producing
+            a digest.
 
     Returns:
-        A :class:`RunResult` whose clusters are ranked by signal, descending.
+        A :class:`RunResult` whose stories are ranked by signal, descending.
     """
     items, since, errors = collect(window, sources, now)
 
@@ -144,29 +196,75 @@ def run(
 
     clusters = deduplicate(items, known=known, threshold=threshold)
 
+    kept: list[Story] = []
+    dropped: list[Story] = []
+    for cluster in clusters:
+        story = Story(cluster=cluster, provenance=_provenance_of(cluster, resolver, now))
+        if require_provenance and resolver is not None and not story.resolved:
+            dropped.append(story)
+        else:
+            kept.append(story)
+
     if store is not None and persist:
-        _record(store, clusters, now)
+        _record(store, kept, dropped, now)
 
-    return RunResult(clusters=clusters, since=since, errors=errors, fetched=len(items))
+    return RunResult(
+        stories=kept,
+        since=since,
+        errors=errors,
+        fetched=len(items),
+        dropped=dropped,
+        pages_fetched=resolver.fetcher.fetches if resolver and resolver.fetcher else 0,
+    )
 
 
-def _record(store: Store, clusters: list[Cluster], now: datetime | None) -> None:
-    """Write every member of every cluster, canonical members marked ``new``.
+def _provenance_of(cluster: Cluster, resolver: Resolver | None, now: datetime | None) -> Provenance:
+    """Resolve a cluster, or fall back to what its sources already supplied."""
+    if resolver is not None:
+        return resolver.resolve_cluster(cluster, now=now).provenance
+    if cluster.primary_source_url:
+        return classify(cluster.primary_source_url, via="source")
+    return NONE
 
-    Duplicates are stored too, not dropped: knowing that a story was carried by
-    four outlets is signal, and the rejected rows are the dataset the rubric
-    gets tuned against later.
+
+def _record(store: Store, kept: list[Story], dropped: list[Story], now: datetime | None) -> None:
+    """Write every member of every cluster, kept and dropped alike.
+
+    Duplicates and rejects are stored, not discarded: knowing a story was
+    carried by four outlets is signal, and the rejected rows are the dataset the
+    rubric gets tuned against later. A dropped story keeps the reason, so "why
+    didn't I see this?" always has an answer.
     """
     with store.transaction():
-        for cluster in clusters:
-            store.upsert(
-                cluster.canonical, cluster_id=cluster.cluster_id, status=STATUS_NEW, now=now
+        for story in kept:
+            _record_cluster(store, story, STATUS_NEW, None, now)
+            store.set_provenance(
+                story.canonical.id,
+                story.evidence.value,
+                story.provenance.url,
+                story.provenance.via,
             )
-            for duplicate in cluster.duplicates:
-                store.upsert(
-                    duplicate,
-                    cluster_id=cluster.cluster_id,
-                    status=STATUS_DUPLICATE,
-                    reason=f"duplicate of {cluster.canonical.id}",
-                    now=now,
-                )
+        for story in dropped:
+            _record_cluster(store, story, STATUS_REJECTED, "no primary source", now)
+
+
+def _record_cluster(
+    store: Store, story: Story, status: str, reason: str | None, now: datetime | None
+) -> None:
+    """Write a cluster's canonical member at ``status``, and its duplicates."""
+    cluster = story.cluster
+    store.upsert(
+        cluster.canonical,
+        cluster_id=cluster.cluster_id,
+        status=status,
+        reason=reason,
+        now=now,
+    )
+    for duplicate in cluster.duplicates:
+        store.upsert(
+            duplicate,
+            cluster_id=cluster.cluster_id,
+            status=STATUS_DUPLICATE,
+            reason=f"duplicate of {cluster.canonical.id}",
+            now=now,
+        )

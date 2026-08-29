@@ -18,6 +18,8 @@ _TERMS: tuple[str, ...] = (
     # umbrella
     r"a\.?i\.?",
     r"artificial intelligence",
+    r"agi\b",
+    r"superintelligence",
     r"machine learning",
     r"deep learning",
     r"neural net(work)?s?",
