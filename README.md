@@ -21,9 +21,14 @@ author's confidence — while a quieter announcement survives because its blog
 post links out to an arXiv paper. Everything discarded is kept in the database
 with the reason, so "why didn't I see this?" always has an answer.
 
-Right now it ingests, deduplicates, resolves provenance and prints a ranked
-table. Scoring the survivors with an LLM, rendering an HTML digest and mailing
-it on a schedule are the parts still to come.
+It also looks at the artifact itself. A GitHub URL in a launch post proves
+nothing — anyone can write one. So each surviving story's repository or paper
+gets checked: commit history, contributor count, whether there is code or only a
+README with a waitlist link.
+
+Right now it ingests, deduplicates, resolves provenance, checks the artifact and
+prints a ranked table. Scoring the survivors with an LLM, rendering an HTML
+digest and mailing it on a schedule are the parts still to come.
 
 ## Quick start
 
@@ -40,17 +45,27 @@ arXiv, collapses duplicates, resolves what it can, and prints what survived:
 ```
 fetched 47 -> 12 stories (9 new, 3 seen before, 6 folded in, 29 unsourced)
 evidence: paper 5, repo 4, official_blog 2, model_weights 1
-pages fetched: 8
+flags: readme_only 1, single_contributor 2, waitlist 1, young_history 2
+thin: 1 of 12
+fetched: 8 pages, 19 api calls
 
-  SIGNAL  PUBLISHED     SRC     EVID  TITLE
+   SIGNAL  PUBLISHED     SRC     EVID  TITLE
 --------------------------------------------------------------------------------
-   320.9  01-02 09:00   hn      pape  Sparse autoencoders scale to frontier models
-   280.5  01-02 09:00   hn      repo  Show HN: a tiny LLM inference runtime in C
-~  190.4  01-02 09:00   hn      pape  We trained a new reasoning model  +hf
+ !  456.0  01-02 09:00   hn      repo  AgentOS: the last agent framework you need
+    320.9  01-02 09:00   hn      pape  Sparse autoencoders scale to frontier models
+    280.5  01-02 09:00   hn      repo  Show HN: a tiny LLM inference runtime in C
+~   190.4  01-02 09:00   hn      pape  We trained a new reasoning model  +hf
 ```
 
-Reading a row: `~` means an earlier run already reported this story, `EVID` says
-what it can be checked against, and `+hf` names the other feeds that carried it.
+Reading a row: `~` means an earlier run already reported this story, `!` means
+the artifact behind it looks like a launch page, `EVID` says what it can be
+checked against, and `+hf` names the other feeds that carried it.
+
+That top row is the whole idea in one line. It is the highest-scoring item of
+the run — 6,100 stars, 1,525 of them per day — and its repository is a README
+with a waitlist link. The runtime three rows down is gaining six stars a day and
+is a real project. Ranking on popularity would have put them in exactly this
+order and told you nothing.
 
 State lives in `papertrail.db` next to you. Run it twice and the second run
 reports nothing new — that is the point of the database.
@@ -68,7 +83,11 @@ src/papertrail/
   fetcher.py     one polite, cached fetch per URL
   extract.py     candidate links out of a fetched page
   resolver.py    source -> URL -> page, in that order
-  audit.py       scoring the classifier against hand labels
+  substance.py   the rules: does the artifact hold up?
+  github.py      repository facts from the GitHub API
+  papers.py      paper facts from the arXiv API
+  checker.py     dispatches on evidence type to the right gatherer
+  audit.py       scoring both rule sets against hand labels
   store.py       SQLite: everything ever seen, including the rejects
   pipeline.py    fan out, cluster, resolve, record
   render.py      the terminal table
@@ -81,8 +100,9 @@ src/papertrail/
 
 data/
   provenance_cases.jsonl   hand-labelled URLs the classifier is scored against
+  repo_cases.jsonl         hand-judged repositories the substance rules are scored against
 
-tests/            349 tests, none of which touch the network
+tests/            476 tests, none of which touch the network
 docs/plan.md      the build plan this project is following
 ```
 
@@ -105,17 +125,19 @@ Useful flags:
 | `--new-only` | Hide stories an earlier run already reported |
 | `--keep-unsourced` | Keep stories with no primary source, to see what the resolver is missing |
 | `--no-fetch` | Resolve from URLs alone and never read a page — safe with no network |
+| `--no-check` | Skip the repository and paper reality checks |
 | `--dry-run` | Read the database to deduplicate, but write nothing back |
 | `--db` | Where the SQLite file lives (default `papertrail.db`) |
 | `--dedup-days` | How far back to look for stories already handled (default 7) |
 | `--threshold` | Title similarity required to merge two items (default 90) |
 | `--min-points` | Signal floor on Hacker News (default 5) |
 
-There is also an `audit` command, which scores the provenance classifier against
-the hand-labelled URLs in `data/`:
+There is also an `audit` command, which scores both rule sets against the hand
+labels in `data/`:
 
 ```bash
-uv run papertrail audit
+uv run papertrail audit                  # both
+uv run papertrail audit --kind repos     # just the substance rules
 ```
 
 ```
@@ -132,9 +154,20 @@ official_blog       100.0%   100.0%   12
 none                100.0%   100.0%   37
 ```
 
-Those cases are hand-labelled URL *shapes*, so this is a regression guard rather
-than a field measurement of live pages. The useful way to extend it is to add a
-case you expect to fail — that is how most of the classifier's bugs were found.
+```
+16 repositories, 16 judged correctly
+accuracy 100.0%
+
+REPOSITORY                    CALLED  ACTUAL   FLAGS
+------------------------------------------------------------------------------
+ real/lab-code-drop           real    real     single_contributor,young_history
+ vapor/agent-waitlist         thin    thin     readme_only,single_contributor,waitlist
+```
+
+Those cases are hand-labelled URL shapes and hand-authored fact profiles, so
+this is a regression guard rather than a field measurement of live pages and
+live repositories. The useful way to extend either file is to add a case you
+expect to fail — that is how most of the rules' bugs were found.
 
 To work on the code:
 
@@ -191,6 +224,27 @@ The fetcher is written to be defensible, because it reads other people's
 websites: one fetch per URL ever with failures cached too, so a 404 is not
 retried daily; robots.txt honoured and cached per host; an honest User-Agent; a
 hard cap on body size; anything that isn't markup rejected before it is read.
+
+**Check.** Provenance says a story points at a repository. That is not the same
+as the repository being real, and anyone can put a GitHub URL in a launch post.
+So each survivor's artifact is looked up — commit span, contributor count, code
+files against documentation files, licence, and the README scanned for waitlist
+language — and annotated with flags from a closed vocabulary.
+
+Every flag is an observation, not a verdict, and none of them condemns on its
+own. Plenty of excellent research code is one author with a week of history;
+plenty of finished projects are archived. What marks a story as *thin* is a
+combination: a waitlist link, or no implementation at all, or one author and a
+few days of history *and* not much code.
+
+That last clause was added because the rules got it wrong. A lab publishing
+months of work as a single commit on paper day is one contributor with a week of
+history — and 210 files of real code. Judging it on commit history buries
+exactly the release the digest exists to surface.
+
+Checking never drops a story, unlike resolution. Whether a thin repository is
+worth reading is a judgement, and a judgement belongs to the scoring stage with
+the whole picture in front of it.
 
 **Record.** Everything goes into SQLite — survivors, duplicates and rejects
 alike, each with its status and reason. Keeping the rejects is deliberate. After
