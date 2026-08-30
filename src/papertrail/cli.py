@@ -10,7 +10,16 @@ import json
 import sys
 from datetime import timedelta
 
-from .audit import DEFAULT_CASES, audit, format_report, load_cases
+from .audit import (
+    DEFAULT_CASES,
+    DEFAULT_REPO_CASES,
+    audit,
+    audit_repos,
+    format_repo_report,
+    format_report,
+    load_cases,
+    load_repo_cases,
+)
 from .checker import Checker
 from .dedup import DEFAULT_THRESHOLD
 from .fetcher import Fetcher
@@ -21,7 +30,7 @@ from .render import format_summary, format_table
 from .resolver import Resolver
 from .sources import REGISTRY
 from .store import Store
-from .timeutil import isoformat_utc, parse_since
+from .timeutil import isoformat_utc, parse_since, utcnow
 
 DEFAULT_DB = "papertrail.db"
 
@@ -110,12 +119,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     audit_cmd = subcommands.add_parser(
-        "audit", help="score the provenance classifier against hand-labelled cases"
+        "audit", help="score the classifier and the substance rules against hand labels"
+    )
+    audit_cmd.add_argument(
+        "--kind",
+        choices=("provenance", "repos", "all"),
+        default="all",
+        help="which rules to score (default: all)",
     )
     audit_cmd.add_argument(
         "--cases",
         default=str(DEFAULT_CASES),
         help="JSONL file of {url, expected, note} records",
+    )
+    audit_cmd.add_argument(
+        "--repo-cases",
+        default=str(DEFAULT_REPO_CASES),
+        help="JSONL file of {slug, verdict, facts, note} records",
     )
     audit_cmd.add_argument(
         "--min-accuracy",
@@ -186,16 +206,25 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _audit(args: argparse.Namespace) -> int:
-    """Run the classifier over a case file and print the score."""
+    """Score the requested rule sets and print the results."""
+    accuracies = []
     try:
-        cases = load_cases(args.cases)
-    except (OSError, ValueError) as exc:
+        if args.kind in ("provenance", "all"):
+            report = audit(load_cases(args.cases))
+            print(format_report(report))
+            accuracies.append(report.accuracy)
+
+        if args.kind in ("repos", "all"):
+            if accuracies:
+                print()
+            repo_report = audit_repos(load_repo_cases(args.repo_cases), utcnow())
+            print(format_repo_report(repo_report))
+            accuracies.append(repo_report.accuracy)
+    except (OSError, ValueError, KeyError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
-    report = audit(cases)
-    print(format_report(report))
-    return 0 if report.accuracy >= args.min_accuracy else 1
+    return 0 if min(accuracies) >= args.min_accuracy else 1
 
 
 if __name__ == "__main__":

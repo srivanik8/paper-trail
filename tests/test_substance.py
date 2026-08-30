@@ -150,9 +150,36 @@ def test_a_short_history_alone_is_not_thin():
     assert assess_repo(facts, NOW).thin is False
 
 
-def test_one_contributor_and_a_few_days_together_are_thin():
+def test_one_contributor_and_a_few_days_with_little_code_are_thin():
     facts = solid(
         contributors=1,
+        code_files=3,
+        first_commit_at=NOW - timedelta(days=2),
+        last_commit_at=NOW,
+    )
+    assert assess_repo(facts, NOW).thin is True
+
+
+def test_a_lab_code_drop_survives_one_author_and_one_week():
+    """Judging a paper-day release by its commit history buries it."""
+    facts = solid(
+        contributors=1,
+        code_files=210,
+        first_commit_at=NOW - timedelta(days=5),
+        last_commit_at=NOW - timedelta(days=1),
+    )
+    assessment = assess_repo(facts, NOW)
+
+    assert Flag.SINGLE_CONTRIBUTOR in assessment.flags
+    assert Flag.YOUNG_HISTORY in assessment.flags
+    assert assessment.thin is False
+
+
+def test_unknown_file_counts_do_not_rescue_a_thin_repository():
+    """Absent evidence must not act as evidence of substance."""
+    facts = solid(
+        contributors=1,
+        code_files=None,
         first_commit_at=NOW - timedelta(days=2),
         last_commit_at=NOW,
     )

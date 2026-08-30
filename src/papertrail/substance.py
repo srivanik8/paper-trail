@@ -54,6 +54,12 @@ YOUNG_HISTORY_DAYS = 7
 #: No push in this long and the project has stopped, whatever its star count.
 STALE_DAYS = 180
 
+#: Enough implementation to count as a project on its own, regardless of how
+#: it got there. A lab publishing months of work as a single commit on paper
+#: day is one author with a week of history and is emphatically not a launch
+#: page -- the code is right there.
+SUBSTANTIAL_CODE_FILES = 20
+
 #: Phrases that mean "there is nothing here yet, but leave your email".
 _WAITLIST = re.compile(
     r"""
@@ -136,6 +142,7 @@ class Substance:
 
     flags: tuple[Flag, ...] = ()
     star_velocity: float | None = None
+    code_files: int | None = None
     notes: dict[str, object] = field(default_factory=dict)
 
     @property
@@ -153,7 +160,9 @@ class Substance:
         if Flag.README_ONLY in found:
             return True
         if {Flag.SINGLE_CONTRIBUTOR, Flag.YOUNG_HISTORY} <= found:
-            return True
+            # ...unless there is a real implementation sitting there. Judging a
+            # code drop by its commit history is how you bury a paper release.
+            return self.code_files is None or self.code_files < SUBSTANTIAL_CODE_FILES
         return {Flag.ARCHIVED, Flag.STALE} <= found
 
 
@@ -243,6 +252,7 @@ def assess_repo(facts: RepoFacts, now: datetime) -> Substance:
     return Substance(
         flags=tuple(repo_flags(facts, now)),
         star_velocity=star_velocity(facts.stars, facts.created_at, now),
+        code_files=facts.code_files,
         notes={
             "slug": facts.slug,
             "stars": facts.stars,
