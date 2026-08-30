@@ -10,6 +10,11 @@ Resolution is where the volume goes. Clusters that cannot be traced to a paper,
 a repository, published weights or an official post are recorded with the
 reason and then dropped, so nothing downstream -- and nothing billable -- ever
 sees them.
+
+What survives is then *checked*: the repository or paper behind it is looked up
+and annotated with substance flags. Unlike resolution, checking never drops
+anything. Whether a thin repository is worth reading is a judgement, and a
+judgement belongs to the scoring stage with the whole picture in front of it.
 """
 
 from __future__ import annotations
@@ -17,6 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
+from .checker import Checker
 from .dedup import DEFAULT_THRESHOLD, Cluster, Known, deduplicate
 from .models import Item
 from .provenance import NONE, Evidence, Provenance, classify
@@ -24,6 +30,7 @@ from .resolver import Resolver
 from .sources import REGISTRY
 from .sources.base import Source
 from .store import STATUS_DUPLICATE, STATUS_NEW, STATUS_REJECTED, Store
+from .substance import Substance
 from .timeutil import utcnow
 
 #: How far back to look for stories a previous run already handled. Longer than
@@ -33,10 +40,11 @@ DEFAULT_DEDUP_WINDOW = timedelta(days=7)
 
 @dataclass(frozen=True, slots=True)
 class Story:
-    """A cluster together with what it can be checked against."""
+    """A cluster, what it can be checked against, and how that held up."""
 
     cluster: Cluster
     provenance: Provenance = NONE
+    substance: Substance = field(default_factory=Substance)
 
     @property
     def canonical(self) -> Item:
@@ -53,6 +61,11 @@ class Story:
         """True if this story points at something checkable."""
         return self.provenance.resolved
 
+    @property
+    def thin(self) -> bool:
+        """True if the artifact behind this story looks like a launch page."""
+        return self.substance.thin
+
 
 @dataclass(frozen=True, slots=True)
 class RunResult:
@@ -64,6 +77,7 @@ class RunResult:
     fetched: int = 0
     dropped: list[Story] = field(default_factory=list)
     pages_fetched: int = 0
+    checks_made: int = 0
 
     @property
     def clusters(self) -> list[Cluster]:
@@ -105,6 +119,20 @@ class RunResult:
         for story in self.stories:
             counts[story.evidence.value] = counts.get(story.evidence.value, 0) + 1
         return counts
+
+    @property
+    def per_flag(self) -> dict[str, int]:
+        """How often each substance flag was raised across surviving stories."""
+        counts: dict[str, int] = {}
+        for story in self.stories:
+            for flag in story.substance.flags:
+                counts[flag.value] = counts.get(flag.value, 0) + 1
+        return counts
+
+    @property
+    def thin(self) -> list[Story]:
+        """Surviving stories whose artifact looks like a launch page."""
+        return [story for story in self.stories if story.thin]
 
 
 def build_sources(names: list[str] | None = None, **kwargs: object) -> list[Source]:
@@ -162,6 +190,7 @@ def run(
     store: Store | None = None,
     *,
     resolver: Resolver | None = None,
+    checker: Checker | None = None,
     now: datetime | None = None,
     dedup_window: timedelta = DEFAULT_DEDUP_WINDOW,
     threshold: int = DEFAULT_THRESHOLD,
@@ -177,6 +206,8 @@ def run(
             so every item looks new -- fine for a one-off, useless for a digest.
         resolver: Finds each cluster's primary source. Without one, resolution
             is skipped and nothing is dropped for lack of provenance.
+        checker: Assesses the artifact behind each surviving story. Without
+            one, stories carry no substance flags. Checking never drops.
         now: Clock override, for tests.
         dedup_window: How far back to look for stories already handled.
         threshold: Title similarity required to merge two items.
@@ -199,11 +230,15 @@ def run(
     kept: list[Story] = []
     dropped: list[Story] = []
     for cluster in clusters:
-        story = Story(cluster=cluster, provenance=_provenance_of(cluster, resolver, now))
-        if require_provenance and resolver is not None and not story.resolved:
-            dropped.append(story)
-        else:
-            kept.append(story)
+        provenance = _provenance_of(cluster, resolver, now)
+        if require_provenance and resolver is not None and not provenance.resolved:
+            dropped.append(Story(cluster=cluster, provenance=provenance))
+            continue
+
+        # Only survivors are checked; there is no point spending an API call on
+        # something already dropped.
+        substance = checker.check(provenance, now=now) if checker else Substance()
+        kept.append(Story(cluster=cluster, provenance=provenance, substance=substance))
 
     if store is not None and persist:
         _record(store, kept, dropped, now)
@@ -215,6 +250,7 @@ def run(
         fetched=len(items),
         dropped=dropped,
         pages_fetched=resolver.fetcher.fetches if resolver and resolver.fetcher else 0,
+        checks_made=checker.requests if checker else 0,
     )
 
 
@@ -243,6 +279,11 @@ def _record(store: Store, kept: list[Story], dropped: list[Story], now: datetime
                 story.evidence.value,
                 story.provenance.url,
                 story.provenance.via,
+            )
+            store.set_substance(
+                story.canonical.id,
+                [flag.value for flag in story.substance.flags],
+                story.substance.star_velocity,
             )
         for story in dropped:
             _record_cluster(store, story, STATUS_REJECTED, "no primary source", now)

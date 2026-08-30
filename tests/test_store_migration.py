@@ -145,3 +145,54 @@ def test_provenance_is_recorded_against_an_item():
         assert row["evidence"] == "paper"
         assert row["primary_source_url"] == "https://arxiv.org/abs/2401.00001"
         assert row["provenance_via"] == "page"
+
+
+# --- v2 -> v3 ---------------------------------------------------------------
+
+
+def test_a_v2_database_gains_the_substance_columns(tmp_path):
+    """A database created before day 4 must upgrade without losing rows."""
+    path = tmp_path / "v2.db"
+    make_v1_database(path)
+
+    with Store(path) as store:  # v1 -> v3 in one pass
+        assert store.schema_version == SCHEMA_VERSION
+        row = store.get("abc123")
+        assert row["title"] == "An older story"
+        assert row["substance_flags"] is None
+        assert row["star_velocity"] is None
+
+
+def test_substance_is_recorded_against_an_item(tmp_path):
+    import json
+
+    with Store(tmp_path / "p.db") as store:
+        item = Item(
+            title="A repository launch",
+            url="https://github.com/owner/repo",
+            source="hn",
+            published_at=WHEN,
+            raw_signal=10.0,
+        )
+        store.upsert(item)
+        store.set_substance(item.id, ["readme_only", "single_contributor"], 12.5)
+
+        row = store.get(item.id)
+        assert json.loads(row["substance_flags"]) == ["readme_only", "single_contributor"]
+        assert row["star_velocity"] == 12.5
+
+
+def test_an_item_with_no_flags_records_an_empty_list(tmp_path):
+    import json
+
+    with Store(tmp_path / "p.db") as store:
+        item = Item(
+            title="A solid repository",
+            url="https://github.com/owner/solid",
+            source="hn",
+            published_at=WHEN,
+            raw_signal=10.0,
+        )
+        store.upsert(item)
+        store.set_substance(item.id, [], 0.4)
+        assert json.loads(store.get(item.id)["substance_flags"]) == []

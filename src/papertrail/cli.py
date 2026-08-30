@@ -11,8 +11,11 @@ import sys
 from datetime import timedelta
 
 from .audit import DEFAULT_CASES, audit, format_report, load_cases
+from .checker import Checker
 from .dedup import DEFAULT_THRESHOLD
 from .fetcher import Fetcher
+from .github import GitHub
+from .papers import ArxivPapers
 from .pipeline import DEFAULT_DEDUP_WINDOW, build_sources, run
 from .render import format_summary, format_table
 from .resolver import Resolver
@@ -91,6 +94,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="resolve from URLs alone; never read a page",
     )
     run_cmd.add_argument(
+        "--no-check",
+        action="store_true",
+        help="skip the repository and paper reality checks",
+    )
+    run_cmd.add_argument(
         "--keep-unsourced",
         action="store_true",
         help="keep stories with no primary source, to see what the resolver misses",
@@ -135,11 +143,13 @@ def main(argv: list[str] | None = None) -> int:
 
     with Store(args.db) as store:
         resolver = Resolver(None if args.no_fetch else Fetcher(store))
+        checker = None if args.no_check else Checker(GitHub(store), ArxivPapers(store))
         result = run(
             window,
             sources,
             store,
             resolver=resolver,
+            checker=checker,
             dedup_window=timedelta(days=args.dedup_days),
             threshold=args.threshold,
             persist=not args.dry_run,
@@ -158,6 +168,9 @@ def main(argv: list[str] | None = None) -> int:
             payload["evidence"] = story.evidence.value
             payload["primary_source_url"] = story.provenance.url
             payload["provenance_via"] = story.provenance.via
+            payload["substance_flags"] = [flag.value for flag in story.substance.flags]
+            payload["star_velocity"] = story.substance.star_velocity
+            payload["thin"] = story.thin
             payload["seen_before"] = story.cluster.is_continuation
             print(json.dumps(payload, ensure_ascii=False))
     else:

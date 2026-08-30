@@ -34,18 +34,19 @@ def _truncate(text: str, width: int) -> str:
 def format_table(stories: list[Story], width: int | None = None) -> str:
     """Render stories as a fixed-column table.
 
-    A leading ``~`` marks a story a previous run already reported. The
-    ``EVID`` column names what the story can be checked against. A trailing
-    ``+src,src`` names the other outlets that carried it.
+    A leading ``~`` marks a story a previous run already reported, and a ``!``
+    marks one whose artifact looks like a launch page. The ``EVID`` column names
+    what the story can be checked against. A trailing ``+src,src`` names the
+    other outlets that carried it.
     """
     if not stories:
         return "no items"
 
     total = width or shutil.get_terminal_size((100, 24)).columns
-    # mark(1) + signal(7) + gap + time(12) + gap + src(6) + gap + evid(4) + gaps.
-    title_width = max(MIN_TITLE_WIDTH, total - 40)
+    # marks(2) + signal(7) + gap + time(12) + gap + src(6) + gap + evid(4) + gaps.
+    title_width = max(MIN_TITLE_WIDTH, total - 41)
 
-    header = f" {'SIGNAL':>7}  {'PUBLISHED':<12}  {'SRC':<6}  {'EVID':<4}  TITLE"
+    header = f"  {'SIGNAL':>7}  {'PUBLISHED':<12}  {'SRC':<6}  {'EVID':<4}  TITLE"
     lines = [header, "-" * min(total, len(header) + title_width - 5)]
 
     for story in stories:
@@ -53,10 +54,11 @@ def format_table(stories: list[Story], width: int | None = None) -> str:
         published = isoformat_utc(item.published_at)[5:16].replace("T", " ")
         also = f"  +{','.join(story.cluster.also_seen)}" if story.cluster.also_seen else ""
         mark = "~" if story.cluster.is_continuation else " "
+        thin = "!" if story.thin else " "
         badge = EVIDENCE_BADGE[story.evidence]
         title = _truncate(item.title, title_width - len(also))
         lines.append(
-            f"{mark}{item.raw_signal:>7.1f}  {published:<12}  "
+            f"{mark}{thin}{item.raw_signal:>7.1f}  {published:<12}  "
             f"{item.source:<6}  {badge:<4}  {title}{also}"
         )
     return "\n".join(lines)
@@ -75,8 +77,19 @@ def format_summary(result: RunResult) -> str:
     evidence = ", ".join(f"{name} {n}" for name, n in sorted(result.per_evidence.items()))
     if evidence:
         lines.append(f"evidence: {evidence}")
+    flags = ", ".join(f"{name} {n}" for name, n in sorted(result.per_flag.items()))
+    if flags:
+        lines.append(f"flags: {flags}")
+    if result.thin:
+        lines.append(f"thin: {len(result.thin)} of {count}")
+
+    spent = []
     if result.pages_fetched:
-        lines.append(f"pages fetched: {result.pages_fetched}")
+        spent.append(f"{result.pages_fetched} pages")
+    if result.checks_made:
+        spent.append(f"{result.checks_made} api calls")
+    if spent:
+        lines.append("fetched: " + ", ".join(spent))
 
     lines.extend(f"  ! {name}: {message}" for name, message in sorted(result.errors.items()))
     return "\n".join(lines)

@@ -6,7 +6,6 @@ import pytest
 
 from papertrail.cli import main
 from papertrail.fetcher import Fetcher
-from papertrail.sources.hn import API_URL
 
 WHEN = 1767268800  # 2026-01-01T12:00:00Z
 
@@ -26,19 +25,34 @@ def hit(object_id: str, title: str, points: int = 100, url: str | None = None) -
 
 
 @pytest.fixture
-def hn(monkeypatch):
-    """Serve a fixed set of HN hits to the CLI, without touching the network."""
-    hits: list[dict] = []
+def web(monkeypatch):
+    """Route every outbound request by host.
+
+    All these modules share one ``httpx`` module object, so patching
+    ``httpx.Client`` per-module means the last fixture applied wins for
+    everything. One router keyed on hostname is the only arrangement that lets
+    the HN feed and the GitHub API be mocked in the same test.
+    """
+    routes: dict[str, object] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
-        assert str(request.url).startswith(API_URL)
-        return httpx.Response(200, json={"hits": hits, "nbPages": 1})
+        route = routes.get(request.url.host)
+        if route is None:
+            return httpx.Response(404, json={}, text="")
+        return route(request)
 
-    real_client = httpx.Client
+    real = httpx.Client
     monkeypatch.setattr(
-        "papertrail.sources.hn.httpx.Client",
-        lambda *a, **k: real_client(transport=httpx.MockTransport(handler)),
+        "httpx.Client", lambda *a, **k: real(transport=httpx.MockTransport(handler))
     )
+    return routes
+
+
+@pytest.fixture
+def hn(web):
+    """Serve a fixed set of HN hits to the CLI, without touching the network."""
+    hits: list[dict] = []
+    web["hn.algolia.com"] = lambda request: httpx.Response(200, json={"hits": hits, "nbPages": 1})
     return hits
 
 
@@ -57,11 +71,11 @@ def test_running_twice_reports_nothing_new_the_second_time(hn, tmp_path, capsys)
     )
     db = str(tmp_path / "papertrail.db")
 
-    assert main(["run", "--source", "hn", "--db", db]) == 0
+    assert main(["run", "--source", "hn", "--no-check", "--db", db]) == 0
     first = capsys.readouterr().out
     assert "2 new, 0 seen before" in first
 
-    assert main(["run", "--source", "hn", "--db", db]) == 0
+    assert main(["run", "--source", "hn", "--no-check", "--db", db]) == 0
     second = capsys.readouterr().out
     assert "0 new, 2 seen before" in second
 
@@ -70,10 +84,10 @@ def test_new_only_hides_stories_already_reported(hn, tmp_path, capsys):
     hn.append(hit("1", "Mistral releases Large 3", points=300))
     db = str(tmp_path / "papertrail.db")
 
-    main(["run", "--source", "hn", "--db", db])
+    main(["run", "--source", "hn", "--no-check", "--db", db])
     capsys.readouterr()
 
-    assert main(["run", "--source", "hn", "--db", db, "--new-only"]) == 0
+    assert main(["run", "--source", "hn", "--no-check", "--db", db, "--new-only"]) == 0
     assert "no items" in capsys.readouterr().out
 
 
@@ -81,9 +95,9 @@ def test_dry_run_leaves_the_database_untouched(hn, tmp_path, capsys):
     hn.append(hit("1", "Mistral releases Large 3", points=300))
     db = str(tmp_path / "papertrail.db")
 
-    main(["run", "--source", "hn", "--db", db, "--dry-run"])
+    main(["run", "--source", "hn", "--no-check", "--db", db, "--dry-run"])
     capsys.readouterr()
-    main(["run", "--source", "hn", "--db", db, "--dry-run"])
+    main(["run", "--source", "hn", "--no-check", "--db", db, "--dry-run"])
     assert "1 new, 0 seen before" in capsys.readouterr().out
 
 
@@ -95,7 +109,7 @@ def test_duplicates_are_folded_and_the_other_source_is_named(hn, tmp_path, capsy
         ]
     )
 
-    assert main(["run", "--source", "hn", "--db", str(tmp_path / "p.db")]) == 0
+    assert main(["run", "--source", "hn", "--no-check", "--db", str(tmp_path / "p.db")]) == 0
     out = capsys.readouterr().out
     assert "fetched 2 -> 1 story" in out
     assert "1 folded in" in out
@@ -104,7 +118,9 @@ def test_duplicates_are_folded_and_the_other_source_is_named(hn, tmp_path, capsy
 def test_json_output_is_one_object_per_line(hn, tmp_path, capsys):
     hn.append(hit("1", "Mistral releases Large 3", points=300))
 
-    assert main(["run", "--source", "hn", "--db", str(tmp_path / "p.db"), "--json"]) == 0
+    assert (
+        main(["run", "--source", "hn", "--no-check", "--db", str(tmp_path / "p.db"), "--json"]) == 0
+    )
     payload = json.loads(capsys.readouterr().out.strip())
 
     assert payload["title"] == "Mistral releases Large 3"
@@ -117,10 +133,10 @@ def test_json_marks_a_story_a_previous_run_reported(hn, tmp_path, capsys):
     hn.append(hit("1", "Mistral releases Large 3", points=300))
     db = str(tmp_path / "p.db")
 
-    main(["run", "--source", "hn", "--db", db])
+    main(["run", "--source", "hn", "--no-check", "--db", db])
     capsys.readouterr()
 
-    main(["run", "--source", "hn", "--db", db, "--json"])
+    main(["run", "--source", "hn", "--no-check", "--db", db, "--json"])
     assert json.loads(capsys.readouterr().out.strip())["seen_before"] is True
 
 
@@ -133,7 +149,7 @@ def test_limit_caps_the_table(hn, tmp_path, capsys):
         ]
     )
 
-    main(["run", "--source", "hn", "--db", str(tmp_path / "p.db"), "--limit", "2"])
+    main(["run", "--source", "hn", "--no-check", "--db", str(tmp_path / "p.db"), "--limit", "2"])
     body = capsys.readouterr().out.split("TITLE")[1]
     assert (
         len([line for line in body.splitlines() if line.strip().startswith(("~", "1", "2", "3"))])
@@ -146,20 +162,20 @@ def test_a_totally_failed_run_exits_nonzero(monkeypatch, tmp_path):
         raise httpx.ConnectError("no route to host")
 
     monkeypatch.setattr("papertrail.sources.hn.httpx.Client", explode)
-    assert main(["run", "--source", "hn", "--db", str(tmp_path / "p.db")]) == 1
+    assert main(["run", "--source", "hn", "--no-check", "--db", str(tmp_path / "p.db")]) == 1
 
 
 def test_the_database_is_created_on_first_run(hn, tmp_path):
     hn.append(hit("1", "Mistral releases Large 3", points=300))
     db = tmp_path / "nested" / "papertrail.db"
 
-    assert main(["run", "--source", "hn", "--db", str(db)]) == 0
+    assert main(["run", "--source", "hn", "--no-check", "--db", str(db)]) == 0
     assert db.exists()
 
 
 def test_datetimes_leave_as_iso_utc(hn, tmp_path, capsys):
     hn.append(hit("1", "Mistral releases Large 3", points=300))
-    main(["run", "--source", "hn", "--db", str(tmp_path / "p.db")])
+    main(["run", "--source", "hn", "--no-check", "--db", str(tmp_path / "p.db")])
     assert "01-01 12:00" in capsys.readouterr().out
 
 
@@ -170,7 +186,7 @@ def test_json_reports_provenance_found_on_any_cluster_member(hn, tmp_path, capsy
         | {"url": "https://arxiv.org/pdf/2401.00001v2.pdf?utm_source=x"}
     )
 
-    main(["run", "--source", "hn", "--db", str(tmp_path / "p.db"), "--json"])
+    main(["run", "--source", "hn", "--no-check", "--db", str(tmp_path / "p.db"), "--json"])
     payload = json.loads(capsys.readouterr().out.strip())
     assert payload["url"] == "https://arxiv.org/pdf/2401.00001v2.pdf?utm_source=x"
     assert payload["also_seen"] == []
@@ -187,7 +203,10 @@ def test_stories_with_no_primary_source_are_dropped(hn, tmp_path, capsys):
         ]
     )
 
-    assert main(["run", "--source", "hn", "--db", str(tmp_path / "p.db"), "--no-fetch"]) == 0
+    assert (
+        main(["run", "--source", "hn", "--no-check", "--db", str(tmp_path / "p.db"), "--no-fetch"])
+        == 0
+    )
     out = capsys.readouterr().out
     assert "1 unsourced" in out
     assert "Mistral releases Large 3" in out
@@ -214,7 +233,7 @@ def test_the_evidence_type_is_reported(hn, tmp_path, capsys):
         ]
     )
 
-    main(["run", "--source", "hn", "--db", str(tmp_path / "p.db"), "--no-fetch"])
+    main(["run", "--source", "hn", "--no-check", "--db", str(tmp_path / "p.db"), "--no-fetch"])
     out = capsys.readouterr().out
     assert "paper 1" in out and "repo 1" in out and "model_weights 1" in out
 
@@ -222,7 +241,18 @@ def test_the_evidence_type_is_reported(hn, tmp_path, capsys):
 def test_json_carries_evidence_and_how_it_was_found(hn, tmp_path, capsys):
     hn.append(hit("1", "Sparse autoencoders scale up", url="https://arxiv.org/abs/2401.00001"))
 
-    main(["run", "--source", "hn", "--db", str(tmp_path / "p.db"), "--no-fetch", "--json"])
+    main(
+        [
+            "run",
+            "--source",
+            "hn",
+            "--no-check",
+            "--db",
+            str(tmp_path / "p.db"),
+            "--no-fetch",
+            "--json",
+        ]
+    )
     payload = json.loads(capsys.readouterr().out.strip())
 
     assert payload["evidence"] == "paper"
@@ -236,7 +266,7 @@ def test_dropped_stories_are_recorded_with_their_reason(hn, tmp_path):
     hn.append(hit("2", "Ten predictions for AI in 2026", url="https://blog.example/predictions"))
     db = str(tmp_path / "p.db")
 
-    main(["run", "--source", "hn", "--db", db, "--no-fetch"])
+    main(["run", "--source", "hn", "--no-check", "--db", db, "--no-fetch"])
 
     with Store(db) as store:
         rejected = [
@@ -257,7 +287,10 @@ def test_no_fetch_builds_no_fetcher_at_all(hn, tmp_path, monkeypatch):
     monkeypatch.setattr("papertrail.cli.Fetcher", explode)
     hn.append(hit("1", "A tiny inference runtime", url="https://github.com/owner/runtime"))
 
-    assert main(["run", "--source", "hn", "--db", str(tmp_path / "p.db"), "--no-fetch"]) == 0
+    assert (
+        main(["run", "--source", "hn", "--no-check", "--db", str(tmp_path / "p.db"), "--no-fetch"])
+        == 0
+    )
 
 
 def test_without_no_fetch_a_fetcher_is_built(hn, tmp_path, monkeypatch):
@@ -271,5 +304,159 @@ def test_without_no_fetch_a_fetcher_is_built(hn, tmp_path, monkeypatch):
     monkeypatch.setattr("papertrail.cli.Fetcher", spy)
     hn.append(hit("1", "A tiny inference runtime", url="https://github.com/owner/runtime"))
 
-    main(["run", "--source", "hn", "--db", str(tmp_path / "p.db")])
+    main(["run", "--source", "hn", "--no-check", "--db", str(tmp_path / "p.db")])
     assert built
+
+
+# --- reality checks ---------------------------------------------------------
+
+
+@pytest.fixture
+def gh(web):
+    """Serve GitHub API responses to the checker."""
+    state = {"code_files": 2, "contributors": 47, "readme": "Build with cmake.", "span_days": 800}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import base64
+        from datetime import timedelta
+
+        url = str(request.url)
+        now = datetime(2026, 6, 1, tzinfo=UTC)
+
+        if "/contributors" in url:
+            return httpx.Response(
+                200,
+                json=[{"login": "a"}],
+                headers={"link": f'<...&page={state["contributors"]}>; rel="last"'},
+            )
+        if "/commits" in url:
+            if "page=2" in url:
+                oldest = (now - timedelta(days=state["span_days"])).isoformat()
+                return httpx.Response(200, json=[{"commit": {"committer": {"date": oldest}}}])
+            return httpx.Response(
+                200,
+                json=[{"commit": {"committer": {"date": now.isoformat()}}}],
+                headers={"link": '<...&page=2>; rel="last"'},
+            )
+        if "/git/trees/" in url:
+            tree = [{"type": "blob", "path": "README.md"}]
+            tree += [{"type": "blob", "path": f"src/f{i}.py"} for i in range(state["code_files"])]
+            return httpx.Response(200, json={"tree": tree})
+        if url.endswith("/readme"):
+            return httpx.Response(
+                200,
+                json={
+                    "encoding": "base64",
+                    "content": base64.b64encode(state["readme"].encode()).decode(),
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "full_name": "owner/repo",
+                "stargazers_count": 4200,
+                "created_at": "2024-01-01T00:00:00Z",
+                "pushed_at": now.isoformat(),
+                "default_branch": "main",
+                "license": {"spdx_id": "MIT"},
+            },
+        )
+
+    web["api.github.com"] = handler
+    return state
+
+
+def test_a_solid_repository_raises_no_flags(hn, gh, tmp_path, capsys):
+    hn.append(hit("1", "A fast inference runtime", url="https://github.com/owner/repo"))
+
+    assert main(["run", "--source", "hn", "--no-fetch", "--db", str(tmp_path / "p.db")]) == 0
+    out = capsys.readouterr().out
+    assert "flags:" not in out
+    assert "thin:" not in out
+
+
+def test_a_readme_only_repository_is_flagged_and_marked_thin(hn, gh, tmp_path, capsys):
+    gh["code_files"] = 0
+    hn.append(hit("1", "A revolutionary agent framework", url="https://github.com/owner/repo"))
+
+    main(["run", "--source", "hn", "--no-fetch", "--db", str(tmp_path / "p.db")])
+    out = capsys.readouterr().out
+
+    assert "readme_only 1" in out
+    assert "thin: 1 of 1" in out
+
+
+def test_a_waitlist_readme_is_caught(hn, gh, tmp_path, capsys):
+    gh["readme"] = "Join the waitlist for early access."
+    hn.append(hit("1", "An agent that does everything", url="https://github.com/owner/repo"))
+
+    main(["run", "--source", "hn", "--no-fetch", "--db", str(tmp_path / "p.db")])
+    assert "waitlist 1" in capsys.readouterr().out
+
+
+def test_a_thin_story_is_annotated_not_dropped(hn, gh, tmp_path, capsys):
+    """Provenance drops; substance only annotates."""
+    gh["code_files"] = 0
+    hn.append(hit("1", "A revolutionary agent framework", url="https://github.com/owner/repo"))
+
+    main(["run", "--source", "hn", "--no-fetch", "--db", str(tmp_path / "p.db")])
+    out = capsys.readouterr().out
+
+    assert "0 unsourced" in out
+    assert "A revolutionary agent framework" in out
+
+
+def test_json_carries_the_flags_and_velocity(hn, gh, tmp_path, capsys):
+    gh["code_files"] = 0
+    gh["contributors"] = 1
+    hn.append(hit("1", "A revolutionary agent framework", url="https://github.com/owner/repo"))
+
+    main(["run", "--source", "hn", "--no-fetch", "--json", "--db", str(tmp_path / "p.db")])
+    payload = json.loads(capsys.readouterr().out.strip())
+
+    assert "readme_only" in payload["substance_flags"]
+    assert "single_contributor" in payload["substance_flags"]
+    assert payload["thin"] is True
+    assert payload["star_velocity"] > 0
+
+
+def test_flags_are_recorded_in_the_store(hn, gh, tmp_path):
+    import json as jsonlib
+
+    from papertrail.store import Store
+
+    gh["code_files"] = 0
+    hn.append(hit("1", "A revolutionary agent framework", url="https://github.com/owner/repo"))
+    db = str(tmp_path / "p.db")
+
+    main(["run", "--source", "hn", "--no-fetch", "--db", db])
+
+    with Store(db) as store:
+        (row,) = store.since(datetime(2020, 1, 1, tzinfo=UTC))
+        assert "readme_only" in jsonlib.loads(row["substance_flags"])
+        assert row["star_velocity"] is not None
+
+
+def test_no_check_makes_no_api_calls(hn, tmp_path, monkeypatch):
+    def explode(*args, **kwargs):
+        raise AssertionError("a checker was built despite --no-check")
+
+    monkeypatch.setattr("papertrail.cli.Checker", explode)
+    hn.append(hit("1", "A fast inference runtime", url="https://github.com/owner/repo"))
+
+    assert (
+        main(["run", "--source", "hn", "--no-check", "--no-fetch", "--db", str(tmp_path / "p.db")])
+        == 0
+    )
+
+
+def test_unsourced_stories_are_never_checked(hn, gh, tmp_path, capsys):
+    """No point spending an API call on something already dropped."""
+    hn.append(
+        hit("1", "Ten predictions for AI agents in 2026", url="https://blog.example/predictions")
+    )
+
+    main(["run", "--source", "hn", "--no-fetch", "--db", str(tmp_path / "p.db")])
+    out = capsys.readouterr().out
+    assert "1 unsourced" in out
+    assert "api calls" not in out

@@ -35,7 +35,7 @@ from .ids import canonical_url
 from .models import Item
 from .timeutil import isoformat_utc, parse_iso, to_utc, utcnow
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 #: Lifecycle of an item. ``new`` means "survived to be a candidate"; the rest
 #: record why it stopped, so a query can always answer "why didn't I see this?"
@@ -98,6 +98,10 @@ _MIGRATIONS: dict[int, str] = {
 
     ALTER TABLE items ADD COLUMN evidence TEXT;
     ALTER TABLE items ADD COLUMN provenance_via TEXT;
+    """,
+    3: """
+    ALTER TABLE items ADD COLUMN substance_flags TEXT;
+    ALTER TABLE items ADD COLUMN star_velocity REAL;
     """,
 }
 
@@ -375,6 +379,18 @@ class Store:
                  WHERE id = ?
                 """,
                 (evidence, url, via, item_id),
+            )
+
+    def set_substance(self, item_id: str, flags: list[str], star_velocity: float | None) -> None:
+        """Record how the artifact behind an item held up.
+
+        Flags are stored as a JSON array so a month of them can be counted
+        without a join; the vocabulary is closed, so the counts mean something.
+        """
+        with self.connection:
+            self.connection.execute(
+                "UPDATE items SET substance_flags = ?, star_velocity = ? WHERE id = ?",
+                (json.dumps(flags), star_velocity, item_id),
             )
 
     @staticmethod
