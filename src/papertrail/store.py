@@ -35,7 +35,7 @@ from .ids import canonical_url
 from .models import Item
 from .timeutil import isoformat_utc, parse_iso, to_utc, utcnow
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 #: Lifecycle of an item. ``new`` means "survived to be a candidate"; the rest
 #: record why it stopped, so a query can always answer "why didn't I see this?"
@@ -102,6 +102,17 @@ _MIGRATIONS: dict[int, str] = {
     3: """
     ALTER TABLE items ADD COLUMN substance_flags TEXT;
     ALTER TABLE items ADD COLUMN star_velocity REAL;
+    """,
+    4: """
+    CREATE TABLE IF NOT EXISTS scores (
+        cluster_id TEXT PRIMARY KEY,
+        payload    TEXT NOT NULL,
+        scored_at  TEXT NOT NULL
+    );
+
+    ALTER TABLE items ADD COLUMN signal_score INTEGER;
+    ALTER TABLE items ADD COLUMN one_line TEXT;
+    ALTER TABLE items ADD COLUMN hype_flags TEXT;
     """,
 }
 
@@ -391,6 +402,44 @@ class Store:
             self.connection.execute(
                 "UPDATE items SET substance_flags = ?, star_velocity = ? WHERE id = ?",
                 (json.dumps(flags), star_velocity, item_id),
+            )
+
+    # --- scores -------------------------------------------------------------
+
+    def cached_score(self, cluster_id: str) -> str | None:
+        """Return the recorded score payload for a cluster, or ``None``.
+
+        Scores are keyed by cluster rather than item so that a story which
+        resurfaces under a new headline is not paid for twice.
+        """
+        row = self.connection.execute(
+            "SELECT payload FROM scores WHERE cluster_id = ?", (cluster_id,)
+        ).fetchone()
+        return row["payload"] if row is not None else None
+
+    def record_score(self, cluster_id: str, payload: str, now: datetime | None = None) -> None:
+        """Store a score payload against its cluster."""
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO scores (cluster_id, payload, scored_at) VALUES (?,?,?)
+                ON CONFLICT(cluster_id) DO UPDATE SET
+                    payload = excluded.payload, scored_at = excluded.scored_at
+                """,
+                (cluster_id, payload, isoformat_utc(now or utcnow())),
+            )
+
+    def set_score(
+        self, item_id: str, signal_score: int, one_line: str, hype_flags: list[str]
+    ) -> None:
+        """Record the model's judgement against an item."""
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE items SET signal_score = ?, one_line = ?, hype_flags = ?
+                 WHERE id = ?
+                """,
+                (signal_score, one_line, json.dumps(hype_flags), item_id),
             )
 
     @staticmethod
