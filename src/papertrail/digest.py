@@ -184,9 +184,8 @@ def render_html(stories: list[Any], now: datetime, dropped: int = 0) -> str:
    </td></tr>
    <tr><td colspan="2" style="padding-top:14px;border-bottom:2px solid {_INK};"></td></tr>
    {body}
-   <tr><td colspan="2" style="padding:16px 0 0;font:12px/1.5 -apple-system,sans-serif;color:{_MUTED};">
-     {footer}
-   </td></tr>
+   <tr><td colspan="2" style="padding:16px 0 0;font:12px/1.5 -apple-system,
+              sans-serif;color:{_MUTED};">{footer}</td></tr>
   </table>
  </td></tr>
 </table>
