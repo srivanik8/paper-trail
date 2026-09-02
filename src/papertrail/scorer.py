@@ -46,6 +46,7 @@ MAX_TOKENS = 16000
 class Usage:
     """What a scoring run consumed."""
 
+    model: str = DEFAULT_MODEL
     requests: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
@@ -61,9 +62,9 @@ class Usage:
         self.cache_read_tokens += getattr(usage, "cache_read_input_tokens", 0) or 0
         self.cache_write_tokens += getattr(usage, "cache_creation_input_tokens", 0) or 0
 
-    def cost(self, model: str) -> float | None:
+    def cost(self, model: str | None = None) -> float | None:
         """Estimated dollars for this run, or ``None`` for an unpriced model."""
-        prices = PRICES.get(model)
+        prices = PRICES.get(model or self.model)
         if prices is None:
             return None
         input_price, output_price = prices
@@ -101,7 +102,7 @@ class Scorer:
         self.model = model
         self.batch_size = batch_size
         self.reuse = reuse
-        self.usage = Usage()
+        self.usage = Usage(model=model)
 
     def _api(self) -> Any:
         """Return the client, building one from the environment on first use."""
@@ -186,7 +187,7 @@ class Scorer:
         return kept
 
 
-def format_usage(usage: Usage, model: str) -> str:
+def format_usage(usage: Usage, model: str | None = None) -> str:
     """One line describing what a scoring run cost."""
     if not usage.requests:
         return ""

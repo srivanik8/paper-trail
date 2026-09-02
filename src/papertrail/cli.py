@@ -28,6 +28,7 @@ from .papers import ArxivPapers
 from .pipeline import DEFAULT_DEDUP_WINDOW, build_sources, run
 from .render import format_summary, format_table
 from .resolver import Resolver
+from .scorer import DEFAULT_MODEL, Scorer
 from .sources import REGISTRY
 from .store import Store
 from .timeutil import isoformat_utc, parse_since, utcnow
@@ -108,6 +109,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="skip the repository and paper reality checks",
     )
     run_cmd.add_argument(
+        "--no-score",
+        action="store_true",
+        help="skip LLM scoring; rank by popularity instead",
+    )
+    run_cmd.add_argument(
+        "--model",
+        default=DEFAULT_MODEL,
+        help=f"model used for scoring (default: {DEFAULT_MODEL})",
+    )
+    run_cmd.add_argument(
+        "--rescore",
+        action="store_true",
+        help="score again even for stories already scored, and pay for it again",
+    )
+    run_cmd.add_argument(
         "--keep-unsourced",
         action="store_true",
         help="keep stories with no primary source, to see what the resolver misses",
@@ -164,12 +180,14 @@ def main(argv: list[str] | None = None) -> int:
     with Store(args.db) as store:
         resolver = Resolver(None if args.no_fetch else Fetcher(store))
         checker = None if args.no_check else Checker(GitHub(store), ArxivPapers(store))
+        scorer = None if args.no_score else Scorer(store, model=args.model, reuse=not args.rescore)
         result = run(
             window,
             sources,
             store,
             resolver=resolver,
             checker=checker,
+            scorer=scorer,
             dedup_window=timedelta(days=args.dedup_days),
             threshold=args.threshold,
             persist=not args.dry_run,
@@ -191,6 +209,12 @@ def main(argv: list[str] | None = None) -> int:
             payload["substance_flags"] = [flag.value for flag in story.substance.flags]
             payload["star_velocity"] = story.substance.star_velocity
             payload["thin"] = story.thin
+            if story.score is not None:
+                payload["signal_score"] = story.score.signal_score
+                payload["category"] = story.score.category.value
+                payload["one_line"] = story.score.one_line
+                payload["hype_flags"] = [flag.value for flag in story.score.hype_flags]
+                payload["why"] = story.score.why
             payload["seen_before"] = story.cluster.is_continuation
             print(json.dumps(payload, ensure_ascii=False))
     else:

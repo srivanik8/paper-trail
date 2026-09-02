@@ -15,18 +15,26 @@ What survives is then *checked*: the repository or paper behind it is looked up
 and annotated with substance flags. Unlike resolution, checking never drops
 anything. Whether a thin repository is worth reading is a judgement, and a
 judgement belongs to the scoring stage with the whole picture in front of it.
+
+Scoring is that stage, and it is the only one that costs money -- which is why
+everything above it exists. By the time the model sees a story, the volume has
+already been cut by relevance, deduplication and provenance, and the story
+arrives with its evidence attached.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from typing import Any
 
 from .checker import Checker
 from .dedup import DEFAULT_THRESHOLD, Cluster, Known, deduplicate
 from .models import Item
 from .provenance import NONE, Evidence, Provenance, classify
 from .resolver import Resolver
+from .scorer import Scorer
+from .scoring import Score
 from .sources import REGISTRY
 from .sources.base import Source
 from .store import STATUS_DUPLICATE, STATUS_NEW, STATUS_REJECTED, Store
@@ -45,6 +53,7 @@ class Story:
     cluster: Cluster
     provenance: Provenance = NONE
     substance: Substance = field(default_factory=Substance)
+    score: Score | None = None
 
     @property
     def canonical(self) -> Item:
@@ -66,6 +75,23 @@ class Story:
         """True if the artifact behind this story looks like a launch page."""
         return self.substance.thin
 
+    @property
+    def signal_score(self) -> int | None:
+        """The model's 0-10 judgement, or ``None`` if it was never scored."""
+        return self.score.signal_score if self.score else None
+
+    @property
+    def rank_key(self) -> tuple[int, float]:
+        """Sort key: scored stories first, by score, then by raw popularity.
+
+        An unscored story sorts below every scored one rather than being
+        treated as a zero -- not knowing is different from knowing it is bad.
+        """
+        return (
+            self.signal_score if self.signal_score is not None else -1,
+            self.canonical.raw_signal,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class RunResult:
@@ -78,6 +104,7 @@ class RunResult:
     dropped: list[Story] = field(default_factory=list)
     pages_fetched: int = 0
     checks_made: int = 0
+    usage: Any = None
 
     @property
     def clusters(self) -> list[Cluster]:
@@ -133,6 +160,20 @@ class RunResult:
     def thin(self) -> list[Story]:
         """Surviving stories whose artifact looks like a launch page."""
         return [story for story in self.stories if story.thin]
+
+    @property
+    def scored(self) -> list[Story]:
+        """Stories the model actually returned a judgement for."""
+        return [story for story in self.stories if story.score is not None]
+
+    @property
+    def per_hype_flag(self) -> dict[str, int]:
+        """How often each hype flag was raised across scored stories."""
+        counts: dict[str, int] = {}
+        for story in self.scored:
+            for flag in story.score.hype_flags:
+                counts[flag.value] = counts.get(flag.value, 0) + 1
+        return counts
 
 
 def build_sources(names: list[str] | None = None, **kwargs: object) -> list[Source]:
@@ -191,6 +232,7 @@ def run(
     *,
     resolver: Resolver | None = None,
     checker: Checker | None = None,
+    scorer: Scorer | None = None,
     now: datetime | None = None,
     dedup_window: timedelta = DEFAULT_DEDUP_WINDOW,
     threshold: int = DEFAULT_THRESHOLD,
@@ -208,6 +250,8 @@ def run(
             is skipped and nothing is dropped for lack of provenance.
         checker: Assesses the artifact behind each surviving story. Without
             one, stories carry no substance flags. Checking never drops.
+        scorer: Ranks the survivors. Without one, stories keep their
+            popularity ordering and carry no score.
         now: Clock override, for tests.
         dedup_window: How far back to look for stories already handled.
         threshold: Title similarity required to merge two items.
@@ -240,6 +284,19 @@ def run(
         substance = checker.check(provenance, now=now) if checker else Substance()
         kept.append(Story(cluster=cluster, provenance=provenance, substance=substance))
 
+    if scorer is not None and kept:
+        judgements = scorer.score(kept, now=now)
+        kept = [
+            Story(
+                cluster=story.cluster,
+                provenance=story.provenance,
+                substance=story.substance,
+                score=judgements.get(story.cluster.cluster_id),
+            )
+            for story in kept
+        ]
+        kept.sort(key=lambda story: story.rank_key, reverse=True)
+
     if store is not None and persist:
         _record(store, kept, dropped, now)
 
@@ -251,6 +308,7 @@ def run(
         dropped=dropped,
         pages_fetched=resolver.fetcher.fetches if resolver and resolver.fetcher else 0,
         checks_made=checker.requests if checker else 0,
+        usage=scorer.usage if scorer else None,
     )
 
 
@@ -285,6 +343,13 @@ def _record(store: Store, kept: list[Story], dropped: list[Story], now: datetime
                 [flag.value for flag in story.substance.flags],
                 story.substance.star_velocity,
             )
+            if story.score is not None:
+                store.set_score(
+                    story.canonical.id,
+                    story.score.signal_score,
+                    story.score.one_line,
+                    [flag.value for flag in story.score.hype_flags],
+                )
         for story in dropped:
             _record_cluster(store, story, STATUS_REJECTED, "no primary source", now)
 

@@ -196,3 +196,57 @@ def test_an_item_with_no_flags_records_an_empty_list(tmp_path):
         store.upsert(item)
         store.set_substance(item.id, [], 0.4)
         assert json.loads(store.get(item.id)["substance_flags"]) == []
+
+
+# --- v3 -> v4 ---------------------------------------------------------------
+
+
+def test_a_pre_scoring_database_gains_the_score_columns(tmp_path):
+    path = tmp_path / "old.db"
+    make_v1_database(path)
+
+    with Store(path) as store:  # v1 -> v4 in one pass
+        assert store.schema_version == SCHEMA_VERSION
+        row = store.get("abc123")
+        assert row["title"] == "An older story"
+        assert row["signal_score"] is None
+        assert row["one_line"] is None
+
+
+def test_a_score_is_recorded_against_an_item(tmp_path):
+    import json
+
+    with Store(tmp_path / "p.db") as store:
+        item = Item(
+            title="A paper release",
+            url="https://arxiv.org/abs/2401.00001",
+            source="hn",
+            published_at=WHEN,
+            raw_signal=10.0,
+        )
+        store.upsert(item)
+        store.set_score(item.id, 8, "A concrete scaling result.", ["vendor_benchmark"])
+
+        row = store.get(item.id)
+        assert row["signal_score"] == 8
+        assert row["one_line"] == "A concrete scaling result."
+        assert json.loads(row["hype_flags"]) == ["vendor_benchmark"]
+
+
+def test_a_cached_score_survives_reopening(tmp_path):
+    with Store(tmp_path / "p.db") as store:
+        store.record_score("cluster-1", '{"signal_score": 7}', now=WHEN)
+    with Store(tmp_path / "p.db") as store:
+        assert store.cached_score("cluster-1") == '{"signal_score": 7}'
+
+
+def test_rescoring_replaces_the_cached_payload(tmp_path):
+    with Store(tmp_path / "p.db") as store:
+        store.record_score("cluster-1", '{"signal_score": 3}', now=WHEN)
+        store.record_score("cluster-1", '{"signal_score": 9}', now=WHEN)
+        assert store.cached_score("cluster-1") == '{"signal_score": 9}'
+
+
+def test_an_unscored_cluster_has_no_cached_payload(tmp_path):
+    with Store(tmp_path / "p.db") as store:
+        assert store.cached_score("never-seen") is None

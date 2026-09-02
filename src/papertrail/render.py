@@ -35,18 +35,18 @@ def format_table(stories: list[Story], width: int | None = None) -> str:
     """Render stories as a fixed-column table.
 
     A leading ``~`` marks a story a previous run already reported, and a ``!``
-    marks one whose artifact looks like a launch page. The ``EVID`` column names
-    what the story can be checked against. A trailing ``+src,src`` names the
-    other outlets that carried it.
+    marks one whose artifact looks like a launch page. ``SC`` is the model's
+    0-10 judgement and ``EVID`` names what the story can be checked against. A
+    trailing ``+src,src`` names the other outlets that carried it.
     """
     if not stories:
         return "no items"
 
     total = width or shutil.get_terminal_size((100, 24)).columns
-    # marks(2) + signal(7) + gap + time(12) + gap + src(6) + gap + evid(4) + gaps.
-    title_width = max(MIN_TITLE_WIDTH, total - 41)
+    # marks(2) + score(2) + signal(7) + time(12) + src(6) + evid(4) + gaps.
+    title_width = max(MIN_TITLE_WIDTH, total - 45)
 
-    header = f"  {'SIGNAL':>7}  {'PUBLISHED':<12}  {'SRC':<6}  {'EVID':<4}  TITLE"
+    header = f"  {'SC'}  {'SIGNAL':>7}  {'PUBLISHED':<12}  {'SRC':<6}  {'EVID':<4}  TITLE"
     lines = [header, "-" * min(total, len(header) + title_width - 5)]
 
     for story in stories:
@@ -56,11 +56,14 @@ def format_table(stories: list[Story], width: int | None = None) -> str:
         mark = "~" if story.cluster.is_continuation else " "
         thin = "!" if story.thin else " "
         badge = EVIDENCE_BADGE[story.evidence]
+        rating = f"{story.signal_score:>2}" if story.signal_score is not None else " -"
         title = _truncate(item.title, title_width - len(also))
         lines.append(
-            f"{mark}{thin}{item.raw_signal:>7.1f}  {published:<12}  "
+            f"{mark}{thin}{rating}  {item.raw_signal:>7.1f}  {published:<12}  "
             f"{item.source:<6}  {badge:<4}  {title}{also}"
         )
+        if story.score is not None:
+            lines.append(f"      {_truncate(story.score.one_line, title_width + 20)}")
     return "\n".join(lines)
 
 
@@ -83,6 +86,10 @@ def format_summary(result: RunResult) -> str:
     if result.thin:
         lines.append(f"thin: {len(result.thin)} of {count}")
 
+    hype = ", ".join(f"{name} {n}" for name, n in sorted(result.per_hype_flag.items()))
+    if hype:
+        lines.append(f"hype: {hype}")
+
     spent = []
     if result.pages_fetched:
         spent.append(f"{result.pages_fetched} pages")
@@ -90,6 +97,14 @@ def format_summary(result: RunResult) -> str:
         spent.append(f"{result.checks_made} api calls")
     if spent:
         lines.append("fetched: " + ", ".join(spent))
+
+    if result.usage is not None:
+        from .scorer import format_usage
+
+        spend = format_usage(result.usage)
+        if spend:
+            lines.append(spend)
+        lines.extend(f"  ! scoring: {message}" for message in result.usage.errors)
 
     lines.extend(f"  ! {name}: {message}" for name, message in sorted(result.errors.items()))
     return "\n".join(lines)
