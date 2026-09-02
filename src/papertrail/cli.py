@@ -9,6 +9,7 @@ import argparse
 import json
 import sys
 from datetime import timedelta
+from pathlib import Path
 
 from .audit import (
     DEFAULT_CASES,
@@ -22,8 +23,10 @@ from .audit import (
 )
 from .checker import Checker
 from .dedup import DEFAULT_THRESHOLD
+from .digest import DEFAULT_LIMIT, DEFAULT_MIN_SCORE, build
 from .fetcher import Fetcher
 from .github import GitHub
+from .mailer import Mailer, MailerNotConfigured
 from .papers import ArxivPapers
 from .pipeline import DEFAULT_DEDUP_WINDOW, build_sources, run
 from .render import format_summary, format_table
@@ -134,6 +137,45 @@ def build_parser() -> argparse.ArgumentParser:
         help="read the store to deduplicate, but record nothing",
     )
 
+    digest_cmd = subcommands.add_parser(
+        "digest", help="render the day's digest, and optionally send it"
+    )
+    digest_cmd.add_argument("--since", default="24h", help="lookback window (default: 24h)")
+    digest_cmd.add_argument("--db", default=DEFAULT_DB, help=f"database (default: {DEFAULT_DB})")
+    digest_cmd.add_argument(
+        "--limit",
+        type=int,
+        default=DEFAULT_LIMIT,
+        help=f"most stories to include (default: {DEFAULT_LIMIT})",
+    )
+    digest_cmd.add_argument(
+        "--min-score",
+        type=int,
+        default=DEFAULT_MIN_SCORE,
+        help=f"lowest score worth including (default: {DEFAULT_MIN_SCORE})",
+    )
+    digest_cmd.add_argument("--model", default=DEFAULT_MODEL, help="model used for scoring")
+    digest_cmd.add_argument("--no-score", action="store_true", help="skip scoring")
+    digest_cmd.add_argument("--no-fetch", action="store_true", help="never read a page")
+    digest_cmd.add_argument("--no-check", action="store_true", help="skip the reality checks")
+    digest_cmd.add_argument(
+        "--out",
+        default="out/digest.html",
+        help="where to write the rendered HTML (default: out/digest.html)",
+    )
+    digest_cmd.add_argument("--send", action="store_true", help="email the digest")
+    digest_cmd.add_argument("--to", default=None, help="recipient (default: $PAPERTRAIL_TO)")
+    digest_cmd.add_argument(
+        "--again",
+        action="store_true",
+        help="send even if today's digest already went out",
+    )
+    digest_cmd.add_argument(
+        "--empty-ok",
+        action="store_true",
+        help="send even when nothing cleared the bar",
+    )
+
     audit_cmd = subcommands.add_parser(
         "audit", help="score the classifier and the substance rules against hand labels"
     )
@@ -168,6 +210,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "audit":
         return _audit(args)
+
+    if args.command == "digest":
+        return _digest(args)
 
     try:
         window = parse_since(args.since)
@@ -227,6 +272,75 @@ def main(argv: list[str] | None = None) -> int:
     if result.errors and not result.stories:
         return 1
     return 0
+
+
+def _digest(args: argparse.Namespace) -> int:
+    """Render the day's digest, write it to disk, and optionally send it."""
+    try:
+        window = parse_since(args.since)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    today = utcnow().strftime("%Y-%m-%d")
+    sources = build_sources(None)
+
+    with Store(args.db) as store:
+        result = run(
+            window,
+            sources,
+            store,
+            resolver=Resolver(None if args.no_fetch else Fetcher(store)),
+            checker=None if args.no_check else Checker(GitHub(store), ArxivPapers(store)),
+            scorer=None if args.no_score else Scorer(store, model=args.model),
+        )
+
+        # Anything already sent today is not news, however well it scored.
+        fresh = [
+            story
+            for story in result.stories
+            if args.again or not store.was_sent(story.canonical.id)
+        ]
+        digest = build(
+            fresh,
+            limit=args.limit,
+            min_score=args.min_score,
+            dropped=len(result.dropped),
+        )
+
+        path = Path(args.out)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(digest.html, encoding="utf-8")
+
+        print(format_summary(result))
+        print(f"digest: {len(digest.stories)} stor{'y' if len(digest.stories) == 1 else 'ies'}")
+        print(f"subject: {digest.subject}")
+        print(f"written: {path}")
+
+        if not args.send:
+            return 0
+
+        if digest.empty and not args.empty_ok:
+            print("not sending: nothing cleared the bar (use --empty-ok to send anyway)")
+            return 0
+
+        mailer = Mailer(recipient=args.to)
+        try:
+            delivery = mailer.send(digest)
+        except MailerNotConfigured as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+
+        if not delivery.ok:
+            print(f"error: send failed: {delivery.error}", file=sys.stderr)
+            return 1
+
+        store.mark_sent([story.canonical.id for story in digest.stories], today)
+        print(
+            f"sent to {mailer.recipient}"
+            + (f" ({delivery.message_id})" if delivery.message_id else "")
+        )
+        return 0
 
 
 def _audit(args: argparse.Namespace) -> int:
