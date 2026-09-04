@@ -35,6 +35,7 @@ from .render import format_summary, format_table
 from .resolver import Resolver
 from .scorer import DEFAULT_MODEL, Scorer
 from .sources import REGISTRY
+from .stats import collect, format_stats, window_from_days
 from .store import Store
 from .timeutil import isoformat_utc, parse_since, utcnow
 
@@ -196,6 +197,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--data", default=DEFAULT_DATA, help=f"archive directory (default: {DEFAULT_DATA})"
     )
 
+    stats_cmd = subcommands.add_parser("stats", help="summarize what the filter has decided so far")
+    stats_cmd.add_argument("--db", default=DEFAULT_DB, help=f"database (default: {DEFAULT_DB})")
+    stats_cmd.add_argument(
+        "--days",
+        type=int,
+        default=0,
+        help="limit to items first seen in the last N days (default: all time)",
+    )
+
     audit_cmd = subcommands.add_parser(
         "audit", help="score the classifier and the substance rules against hand labels"
     )
@@ -233,6 +243,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "digest":
         return _digest(args)
+
+    if args.command == "stats":
+        with Store(args.db) as store:
+            print(format_stats(collect(store, window_from_days(args.days))))
+        return 0
 
     if args.command == "export":
         with Store(args.db) as store:
