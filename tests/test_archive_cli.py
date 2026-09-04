@@ -3,8 +3,6 @@
 import json
 from datetime import UTC, datetime
 
-import pytest
-
 from papertrail.archive import ITEMS_FILE
 from papertrail.cli import main
 from papertrail.models import Item

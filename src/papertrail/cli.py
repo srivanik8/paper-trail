@@ -178,6 +178,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="send even when nothing cleared the bar",
     )
+    digest_cmd.add_argument(
+        "--data",
+        default=None,
+        help="also write the JSONL archive here after the run",
+    )
 
     export_cmd = subcommands.add_parser("export", help="write the store to JSONL for committing")
     export_cmd.add_argument("--db", default=DEFAULT_DB, help=f"database (default: {DEFAULT_DB})")
