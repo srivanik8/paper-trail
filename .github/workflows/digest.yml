@@ -1,0 +1,89 @@
+name: digest
+
+# 06:30 UTC. Cron here is always UTC, so convert your own morning: this is
+# 07:30 in London during BST, 12:00 in Delhi. Change the schedule, not the code.
+on:
+  schedule:
+    - cron: "30 6 * * *"
+  workflow_dispatch:
+    inputs:
+      send:
+        description: "Actually email the digest"
+        type: boolean
+        default: false
+      since:
+        description: "Lookback window"
+        default: "24h"
+
+# The job commits the archive back to the repository, so it needs write access.
+permissions:
+  contents: write
+
+concurrency:
+  # A manual run while the scheduled one is mid-flight would race on the
+  # archive commit. Queue instead of cancelling: a half-finished run that has
+  # already spent API calls should be allowed to record what it learned.
+  group: digest
+  cancel-in-progress: false
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install the project
+        run: uv sync --frozen
+
+      # The runner is destroyed at the end of the job, so the database is
+      # rebuilt from the committed JSONL rather than cached. Cache entries get
+      # evicted without warning, and the failure mode is silent: dedup forgets
+      # everything and every story arrives again.
+      - name: Rebuild the store from the archive
+        run: uv run papertrail restore
+
+      - name: Build and send the digest
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          PAPERTRAIL_TO: ${{ secrets.PAPERTRAIL_TO }}
+          PAPERTRAIL_FROM: ${{ secrets.PAPERTRAIL_FROM }}
+          # Lifts the GitHub API budget from 60 requests an hour to 5,000.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          uv run papertrail digest \
+            --since "${{ inputs.since || '24h' }}" \
+            --data data \
+            --out out/digest.html \
+            ${{ (github.event_name == 'schedule' || inputs.send) && '--send' || '' }}
+
+      - name: Keep the rendered digest as an artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: digest
+          path: out/digest.html
+          if-no-files-found: ignore
+          retention-days: 14
+
+      # Committing the archive is what makes tomorrow's run remember today.
+      - name: Commit the archive
+        run: |
+          if [ -z "$(git status --porcelain data)" ]; then
+            echo "nothing new to record"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data
+          git commit -m "Record $(date -u +%Y-%m-%d) digest run"
+          # Another run may have landed while this one was working.
+          git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
