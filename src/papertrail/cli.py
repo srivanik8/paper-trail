@@ -11,6 +11,8 @@ import sys
 from datetime import timedelta
 from pathlib import Path
 
+from .archive import export as export_archive
+from .archive import restore as restore_archive
 from .audit import (
     DEFAULT_CASES,
     DEFAULT_REPO_CASES,
@@ -37,6 +39,7 @@ from .store import Store
 from .timeutil import isoformat_utc, parse_since, utcnow
 
 DEFAULT_DB = "papertrail.db"
+DEFAULT_DATA = "data"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -176,6 +179,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="send even when nothing cleared the bar",
     )
 
+    export_cmd = subcommands.add_parser("export", help="write the store to JSONL for committing")
+    export_cmd.add_argument("--db", default=DEFAULT_DB, help=f"database (default: {DEFAULT_DB})")
+    export_cmd.add_argument(
+        "--data", default=DEFAULT_DATA, help=f"archive directory (default: {DEFAULT_DATA})"
+    )
+
+    restore_cmd = subcommands.add_parser("restore", help="rebuild the store from committed JSONL")
+    restore_cmd.add_argument("--db", default=DEFAULT_DB, help=f"database (default: {DEFAULT_DB})")
+    restore_cmd.add_argument(
+        "--data", default=DEFAULT_DATA, help=f"archive directory (default: {DEFAULT_DATA})"
+    )
+
     audit_cmd = subcommands.add_parser(
         "audit", help="score the classifier and the substance rules against hand labels"
     )
@@ -213,6 +228,18 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "digest":
         return _digest(args)
+
+    if args.command == "export":
+        with Store(args.db) as store:
+            counts = export_archive(store, args.data)
+        print(f"exported {counts.items} items, {counts.scores} scores to {args.data}/")
+        return 0
+
+    if args.command == "restore":
+        with Store(args.db) as store:
+            counts = restore_archive(store, args.data)
+        print(f"restored {counts.items} items, {counts.scores} scores from {args.data}/")
+        return 0
 
     try:
         window = parse_since(args.since)
@@ -318,10 +345,12 @@ def _digest(args: argparse.Namespace) -> int:
         print(f"written: {path}")
 
         if not args.send:
+            _archive(store, args.data)
             return 0
 
         if digest.empty and not args.empty_ok:
             print("not sending: nothing cleared the bar (use --empty-ok to send anyway)")
+            _archive(store, args.data)
             return 0
 
         mailer = Mailer(recipient=args.to)
@@ -341,6 +370,19 @@ def _digest(args: argparse.Namespace) -> int:
             + (f" ({delivery.message_id})" if delivery.message_id else "")
         )
         return 0
+
+
+def _archive(store: Store, directory: str | None) -> None:
+    """Write the JSONL archive, if the caller asked for one.
+
+    Called on every exit path that got far enough to change the store, so a
+    scheduled run always commits what it learned -- including on a day when
+    nothing was worth sending.
+    """
+    if directory is None:
+        return
+    counts = export_archive(store, directory)
+    print(f"archived {counts.items} items, {counts.scores} scores to {directory}/")
 
 
 def _audit(args: argparse.Namespace) -> int:

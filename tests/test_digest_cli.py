@@ -272,3 +272,38 @@ def test_a_rejected_send_exits_nonzero_and_records_nothing(hn, scores, web, tmp_
     with Store(db) as store:
         rows = store.since(datetime(2020, 1, 1, tzinfo=UTC))
         assert not any(store.was_sent(row["id"]) for row in rows)
+
+
+def test_the_digest_can_write_the_archive_for_committing(hn, scores, tmp_path, capsys):
+    """A scheduled run must commit what it learned, before the runner dies."""
+    from papertrail.archive import ITEMS_FILE
+
+    hn.append(hit("1", "Sparse autoencoders scale to frontier models"))
+    data = tmp_path / "data"
+
+    run_digest(tmp_path, "--data", str(data))
+
+    assert (data / ITEMS_FILE).exists()
+    assert "archived" in capsys.readouterr().out
+
+
+def test_a_day_with_nothing_to_send_still_archives(hn, scores, tmp_path, monkeypatch, capsys):
+    """Otherwise a quiet day loses its record and tomorrow re-reports everything."""
+    from papertrail.archive import ITEMS_FILE
+
+    monkeypatch.setenv("RESEND_API_KEY", "re_test")
+    scores["default"] = 1
+    hn.append(hit("1", "A trivial LLM tweak"))
+    data = tmp_path / "data"
+
+    run_digest(tmp_path, "--send", "--to", "me@example.com", "--data", str(data))
+
+    out = capsys.readouterr().out
+    assert "not sending" in out
+    assert (data / ITEMS_FILE).exists()
+
+
+def test_without_data_no_archive_is_written(hn, scores, tmp_path, capsys):
+    hn.append(hit("1", "An LLM result"))
+    run_digest(tmp_path)
+    assert "archived" not in capsys.readouterr().out
