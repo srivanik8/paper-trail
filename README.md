@@ -30,9 +30,9 @@ Then a model ranks what survived — scoring each story *given* the evidence the
 pipeline gathered, never guessing at it — and the digest is ordered by that
 judgement rather than by upvotes.
 
-Right now it ingests, deduplicates, resolves provenance, checks the artifact,
-scores the survivors, and renders a digest it can email you. Running it on a
-schedule is the part still to come.
+It ingests, deduplicates, resolves provenance, checks the artifact, scores the
+survivors, renders a digest and emails it — on a schedule, from GitHub Actions,
+with no server.
 
 ## Quick start
 
@@ -122,6 +122,73 @@ still renders to disk; `--send` fails loudly rather than quietly doing nothing.
 | `--again` | Send stories that already went out |
 | `--empty-ok` | Send even when nothing cleared the bar |
 
+## Running it every morning
+
+`.github/workflows/digest.yml` runs at 06:30 UTC and on demand. It needs four
+repository secrets: `ANTHROPIC_API_KEY`, `RESEND_API_KEY`, `PAPERTRAIL_TO`, and
+`PAPERTRAIL_FROM` if you have verified a sending domain. `GITHUB_TOKEN` is
+provided automatically and lifts the GitHub API budget from 60 requests an hour
+to 5,000.
+
+**The state problem.** An Actions runner is destroyed when the job ends, so
+`papertrail.db` does not survive to the next morning — and without it,
+deduplication forgets everything and the same story arrives every day.
+`actions/cache` is the obvious fix and the wrong one: entries are evicted
+without warning and the failure is silent.
+
+So the state is committed to the repository as JSONL, and the database is
+rebuilt from it at the start of each run:
+
+```
+restore  →  run  →  digest  →  send  →  export  →  commit data/
+```
+
+That survives indefinitely, shows exactly what changed overnight in a diff, and
+puts the record of what the filter decided in the repo rather than in a binary.
+The export is sorted by first sighting, so new rows land at the end of the file
+and a scheduled run reads as added lines; an updated row changes in place rather
+than duplicating.
+
+```bash
+uv run papertrail export     # write data/*.jsonl
+uv run papertrail restore    # rebuild the database from them
+```
+
+## Looking at what it decided
+
+```bash
+uv run papertrail stats --days 30
+```
+
+```
+412 items since 2026-05-02T00:00:00Z
+23% survived to be a candidate; 68 sent
+
+dropped for:
+  no primary source     241
+  duplicate of ...       76
+
+substance flags:
+  single_contributor     31
+  young_history          22
+  readme_only             9
+  waitlist                4
+
+score distribution:
+   9  ## 2
+   8  ####### 7
+   7  ############# 13
+   6  ################ 16
+   ...
+median score 6
+```
+
+Every run records what it kept, what it dropped and why. After a month that is
+a labelled record of a few hundred of your own judgements — the most interesting
+thing this project produces, and the reason the rejects are kept rather than
+discarded. The score histogram is worth watching: a rubric that scores
+everything a 7 is not a rubric.
+
 ## What's in the repo
 
 ```
@@ -143,6 +210,8 @@ src/papertrail/
   scorer.py      batched calls, caching, and what they cost
   digest.py      selection, and email-safe HTML and text
   mailer.py      one HTTP call to Resend
+  archive.py     JSONL export and rebuild, so state survives a runner
+  stats.py       reading back what the filter decided
   audit.py       scoring both rule sets against hand labels
   store.py       SQLite: everything ever seen, including the rejects
   pipeline.py    fan out, cluster, resolve, record
@@ -162,7 +231,11 @@ docs/
   plan.md                  the build plan this project is following
   sample-digest.html       a rendered digest, for looking at
 
-tests/            604 tests, none of which touch the network
+.github/workflows/
+  digest.yml               the 06:30 UTC run
+  ci.yml                   lint, tests and the rule audit on every push
+
+tests/            657 tests, none of which touch the network
 ```
 
 ## How to run it
@@ -237,7 +310,13 @@ To work on the code:
 uv run pytest
 uv run ruff check .
 uv run ruff format .
+uv run papertrail audit --min-accuracy 1.0   # what CI gates on
 ```
+
+The test suite mocks every outbound call, so it needs no credentials and cannot
+be broken by a third-party API having a bad morning. CI runs the same commands
+plus the rule audit, so a regression in either rule set fails the build instead
+of being noticed a month later.
 
 ## How it works
 
