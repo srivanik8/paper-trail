@@ -20,6 +20,9 @@ from datetime import datetime, timedelta
 from .store import Store
 from .timeutil import isoformat_utc, utcnow
 
+#: Widest a histogram bar gets, in characters.
+BAR_WIDTH = 30
+
 
 @dataclass(frozen=True, slots=True)
 class Stats:
@@ -125,12 +128,17 @@ def _histogram(scores: dict[int, int]) -> list[str]:
     """
     if not scores:
         return []
+
     widest = max(scores.values())
+    # Only scale down. Scaling *up* makes a single item a full-width bar, which
+    # reads as "lots of these" on the first week of data.
+    scale = 1.0 if widest <= BAR_WIDTH else BAR_WIDTH / widest
+
     lines = ["score distribution:"]
     for score in range(10, -1, -1):
         count = scores.get(score, 0)
         if count:
-            bar = "#" * max(1, round(count * 30 / widest))
+            bar = "#" * max(1, round(count * scale))
             lines.append(f"  {score:>2}  {bar} {count}")
     return [*lines, ""]
 

@@ -210,3 +210,46 @@ def test_extra_json_survives_the_tally(store):
         "UPDATE items SET extra = ? WHERE id = ?", (json.dumps({"points": 5}), item.id)
     )
     assert collect(store).total == 1
+
+
+def test_a_single_item_gets_a_single_character_bar(store):
+    """Scaling up makes one item look like a trend on the first week of data."""
+    for i, score in enumerate([9, 8, 7]):
+        item = add(store, f"https://a.example/{i}")
+        store.set_score(item.id, score, "A line.", [])
+
+    text = format_stats(collect(store))
+    bars = [
+        line.split()[1] for line in text.splitlines() if line.strip().startswith(("9", "8", "7"))
+    ]
+    assert all(bar == "#" for bar in bars)
+
+
+def test_bars_are_scaled_down_when_counts_are_large(store):
+    from papertrail.stats import BAR_WIDTH
+
+    for i in range(120):
+        item = add(store, f"https://a.example/{i}")
+        store.set_score(item.id, 7, "A line.", [])
+    item = add(store, "https://a.example/lonely")
+    store.set_score(item.id, 2, "A line.", [])
+
+    text = format_stats(collect(store))
+    widest = max(len(line.split()[1]) for line in text.splitlines() if "#" in line)
+    assert widest == BAR_WIDTH
+
+
+def test_relative_heights_are_preserved(store):
+    for i in range(40):
+        item = add(store, f"https://a.example/hi{i}")
+        store.set_score(item.id, 8, "A line.", [])
+    for i in range(10):
+        item = add(store, f"https://a.example/lo{i}")
+        store.set_score(item.id, 3, "A line.", [])
+
+    bars = {
+        line.split()[0]: len(line.split()[1])
+        for line in format_stats(collect(store)).splitlines()
+        if "#" in line
+    }
+    assert bars["8"] > bars["3"] * 3
