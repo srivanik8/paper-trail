@@ -91,7 +91,7 @@ def _esc(value: str) -> str:
     return html.escape(value or "", quote=True)
 
 
-def _story_html(story: Any, position: int) -> str:
+def _story_html(story: Any) -> str:
     """Render one story as a table row."""
     item = story.canonical
     score = story.signal_score
@@ -152,7 +152,7 @@ def render_html(stories: list[Any], now: datetime, dropped: int = 0) -> str:
     date = now.strftime("%A %d %B %Y")
 
     if stories:
-        body = "\n".join(_story_html(story, i) for i, story in enumerate(stories))
+        body = "\n".join(_story_html(story) for story in stories)
     else:
         body = (
             f'<tr><td colspan="2" style="padding:24px 0;font:15px/1.5 '

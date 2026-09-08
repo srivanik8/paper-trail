@@ -12,7 +12,6 @@ it already paid for instead of buying it twice.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -203,8 +202,3 @@ def format_usage(usage: Usage, model: str | None = None) -> str:
     if cost is not None:
         parts.append(f"~${cost:.4f}")
     return ", ".join(parts)
-
-
-def scores_to_json(scores: dict[str, Score]) -> str:
-    """Serialize a score map, for debugging and for the record."""
-    return json.dumps({key: json.loads(value.model_dump_json()) for key, value in scores.items()})

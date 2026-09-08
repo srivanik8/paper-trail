@@ -21,7 +21,7 @@ from .dedup import Cluster
 from .extract import extract_links
 from .fetcher import Fetcher
 from .models import Item
-from .provenance import NONE, Evidence, Provenance, best, classify
+from .provenance import NONE, Provenance, best, classify
 
 #: Stop after this many classified links per page. A resolved candidate is
 #: found in the first handful or not at all.
@@ -98,8 +98,3 @@ class Resolver:
             if resolution.resolved:
                 return Resolution(cluster.canonical, resolution.provenance, fetched=fetched)
         return Resolution(cluster.canonical, NONE, fetched=fetched)
-
-
-def evidence_of(resolution: Resolution) -> Evidence:
-    """Convenience accessor for a resolution's evidence type."""
-    return resolution.provenance.evidence
