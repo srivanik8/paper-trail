@@ -83,3 +83,25 @@ def test_the_archive_is_diffable_json(tmp_path):
     payload = json.loads(line)
     assert payload["title"] == "A paper"
     assert list(payload) == sorted(payload)
+
+
+def test_the_default_archive_directory_is_not_the_curated_one():
+    """A scheduled run commits state blindly; curated fixtures must be out of reach."""
+    from papertrail.audit import DEFAULT_CASES, DEFAULT_REPO_CASES
+    from papertrail.cli import DEFAULT_STATE
+
+    assert DEFAULT_STATE == "state"
+    assert DEFAULT_CASES.parent.name == "data"
+    assert DEFAULT_REPO_CASES.parent.name == "data"
+
+
+def test_the_archive_never_writes_into_the_curated_directory(tmp_path):
+    from papertrail.archive import ITEMS_FILE, SCORES_FILE
+
+    db = str(tmp_path / "p.db")
+    seed(db)
+    main(["export", "--db", db, "--data", str(tmp_path / "state")])
+
+    assert (tmp_path / "state" / ITEMS_FILE).exists()
+    assert (tmp_path / "state" / SCORES_FILE).exists()
+    assert not (tmp_path / "data").exists()

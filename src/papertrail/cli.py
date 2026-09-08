@@ -40,7 +40,7 @@ from .store import Store
 from .timeutil import isoformat_utc, parse_since, utcnow
 
 DEFAULT_DB = "papertrail.db"
-DEFAULT_DATA = "data"
+DEFAULT_STATE = "state"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -188,13 +188,13 @@ def build_parser() -> argparse.ArgumentParser:
     export_cmd = subcommands.add_parser("export", help="write the store to JSONL for committing")
     export_cmd.add_argument("--db", default=DEFAULT_DB, help=f"database (default: {DEFAULT_DB})")
     export_cmd.add_argument(
-        "--data", default=DEFAULT_DATA, help=f"archive directory (default: {DEFAULT_DATA})"
+        "--data", default=DEFAULT_STATE, help=f"archive directory (default: {DEFAULT_STATE})"
     )
 
     restore_cmd = subcommands.add_parser("restore", help="rebuild the store from committed JSONL")
     restore_cmd.add_argument("--db", default=DEFAULT_DB, help=f"database (default: {DEFAULT_DB})")
     restore_cmd.add_argument(
-        "--data", default=DEFAULT_DATA, help=f"archive directory (default: {DEFAULT_DATA})"
+        "--data", default=DEFAULT_STATE, help=f"archive directory (default: {DEFAULT_STATE})"
     )
 
     stats_cmd = subcommands.add_parser("stats", help="summarize what the filter has decided so far")

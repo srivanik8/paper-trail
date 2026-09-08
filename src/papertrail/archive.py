@@ -19,6 +19,11 @@ by first-sighting, which is append-only *in practice*: new rows land at the end
 of the file and git shows them as additions, while an updated row changes in
 place instead of duplicating.
 
+**Curated data lives elsewhere.** This writes machine-generated state, which a
+scheduled run commits without a human reading it. Hand-curated ground truth --
+the audit case files -- stays in ``data/`` so an automated ``git add`` can never
+sweep up an edit to it.
+
 **Schema drift is expected.** The file outlives any one schema version, so
 export writes whatever columns exist and restore keeps only the columns the
 current database knows about. An archive written by a newer version loads into
