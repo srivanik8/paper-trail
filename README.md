@@ -124,7 +124,7 @@ in a diff rather than a rewritten file.
 ### Working on it
 
 ```bash
-uv run pytest                                # 670 tests, no network
+uv run pytest                                # 671 tests, no network
 uv run ruff check . && uv run ruff format .
 uv run papertrail audit --min-accuracy 1.0   # what CI gates on
 ```
@@ -172,7 +172,7 @@ src/papertrail/
 data/     hand-labelled cases the rules are scored against, never machine-written
 state/    the JSONL archive a scheduled run commits
 docs/     the build plan, and a rendered sample digest
-tests/    670 tests, none of which touch the network
+tests/    671 tests, none of which touch the network
 
 .github/workflows/
   digest.yml   the 06:30 UTC run

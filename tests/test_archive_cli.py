@@ -105,3 +105,26 @@ def test_the_archive_never_writes_into_the_curated_directory(tmp_path):
     assert (tmp_path / "state" / ITEMS_FILE).exists()
     assert (tmp_path / "state" / SCORES_FILE).exists()
     assert not (tmp_path / "data").exists()
+
+
+def test_the_archive_files_are_not_gitignored():
+    """The workflow commits these with `git add state`, which honours .gitignore.
+
+    An ignore rule here breaks the whole state mechanism silently: the job
+    succeeds, commits nothing, and every morning re-reports yesterday's news.
+    """
+    import subprocess
+    from pathlib import Path
+
+    from papertrail.archive import ITEMS_FILE, SCORES_FILE
+    from papertrail.cli import DEFAULT_STATE
+
+    root = Path(__file__).resolve().parents[1]
+    for name in (ITEMS_FILE, SCORES_FILE):
+        result = subprocess.run(
+            ["git", "check-ignore", "-q", f"{DEFAULT_STATE}/{name}"],
+            cwd=root,
+            capture_output=True,
+        )
+        # git check-ignore exits 0 when the path IS ignored.
+        assert result.returncode != 0, f"{DEFAULT_STATE}/{name} is gitignored"

@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "AI news, filtered by whether it can show its work."
 license = "MIT"
 license-files = ["LICENSE"]
+readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "anthropic>=1.2.0",
@@ -11,6 +12,10 @@ dependencies = [
     "pydantic>=2.13.5",
     "rapidfuzz>=3.14.5",
 ]
+
+[project.urls]
+Homepage = "https://github.com/srivanik8/paper-trail"
+Source = "https://github.com/srivanik8/paper-trail"
 
 [project.scripts]
 papertrail = "papertrail.cli:main"
