@@ -24,6 +24,7 @@ from urllib.robotparser import RobotFileParser
 
 import httpx
 
+from .failure import describe
 from .ids import canonical_url
 from .store import Store
 from .timeutil import utcnow
@@ -138,7 +139,7 @@ class Fetcher:
         try:
             response = client.get(url, headers={"User-Agent": USER_AGENT})
         except httpx.HTTPError as exc:
-            return Page(url=url, status=STATUS_ERROR, error=f"{type(exc).__name__}: {exc}")
+            return Page(url=url, status=STATUS_ERROR, error=describe(exc))
 
         content_type = response.headers.get("content-type", "").split(";")[0].strip()
         if content_type and not content_type.startswith(_READABLE_TYPES):

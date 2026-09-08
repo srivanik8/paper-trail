@@ -20,6 +20,7 @@ from datetime import timedelta
 
 import httpx
 
+from .failure import describe
 from .store import Store
 from .substance import PaperFacts
 from .timeutil import parse_iso, utcnow
@@ -125,7 +126,7 @@ class ArxivPapers:
                     response = client.get(API, params=params)
             response.raise_for_status()
         except httpx.HTTPError as exc:
-            return "", f"{type(exc).__name__}: {exc}"
+            return "", describe(exc)
 
         return response.text, None
 

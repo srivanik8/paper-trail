@@ -18,6 +18,7 @@ from datetime import datetime, timedelta
 
 import httpx
 
+from .failure import describe
 from .store import Store
 from .substance import RepoFacts, code_and_doc_files
 from .timeutil import parse_iso, utcnow
@@ -111,7 +112,7 @@ class GitHub:
             response.raise_for_status()
             repo = response.json()
         except httpx.HTTPError as exc:
-            return RepoFacts(slug=slug, error=f"{type(exc).__name__}: {exc}")
+            return RepoFacts(slug=slug, error=describe(exc))
 
         default_branch = repo.get("default_branch") or "main"
 

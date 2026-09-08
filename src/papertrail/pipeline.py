@@ -30,6 +30,7 @@ from typing import Any
 
 from .checker import Checker
 from .dedup import DEFAULT_THRESHOLD, Cluster, Known, deduplicate
+from .failure import describe
 from .models import Item
 from .provenance import NONE, Evidence, Provenance, classify
 from .resolver import Resolver
@@ -207,7 +208,7 @@ def collect(
         try:
             items.extend(source.fetch(since))
         except Exception as exc:  # noqa: BLE001 - one bad feed must not stop the run
-            errors[source.name] = f"{type(exc).__name__}: {exc}"
+            errors[source.name] = describe(exc)
 
     return items, since, errors
 

@@ -18,6 +18,8 @@ from dataclasses import dataclass
 
 import httpx
 
+from .failure import describe
+
 API_URL = "https://api.resend.com/emails"
 
 DEFAULT_TIMEOUT = 15.0
@@ -119,7 +121,7 @@ class Mailer:
                 content=json.dumps(payload),
             )
         except httpx.HTTPError as exc:
-            return Delivery(sent=False, error=f"{type(exc).__name__}: {exc}")
+            return Delivery(sent=False, error=describe(exc))
 
         if response.status_code >= 400:
             # Resend puts the reason in the body; the status alone is not useful.

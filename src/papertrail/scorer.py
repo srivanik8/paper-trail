@@ -18,6 +18,7 @@ from typing import Any
 
 import anthropic
 
+from .failure import describe
 from .scoring import BATCH_SIZE, SYSTEM_PROMPT, Batch, Score, batches, build_prompt
 from .store import Store
 from .timeutil import utcnow
@@ -162,7 +163,7 @@ class Scorer:
                 output_format=Batch,
             )
         except anthropic.APIError as exc:
-            self.usage.errors.append(f"{type(exc).__name__}: {exc}")
+            self.usage.errors.append(describe(exc))
             return []
         except Exception as exc:  # noqa: BLE001 - one bad batch must not stop the run
             self.usage.errors.append(f"{type(exc).__name__}: {exc}")

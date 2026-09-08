@@ -218,3 +218,12 @@ def test_known_clusters_offers_one_title_per_cluster(store):
     known = known_clusters(store, NOW - timedelta(days=7))
     assert len(known) == 1
     assert known[0].cluster_id == lead.id
+
+
+def test_a_source_failure_is_recorded_as_a_single_line():
+    """A wrapped message loses its '!' prefix in a summary and reads as a new event."""
+    bad = FakeSource("bad", error=ValueError("line one\nline two"))
+    result = run(WINDOW, [bad], now=NOW)
+
+    assert "\n" not in result.errors["bad"]
+    assert result.errors["bad"] == "ValueError: line one line two"
