@@ -105,43 +105,26 @@ broken by someone else's API having a bad morning.
 
 ```
 src/papertrail/
-  models.py      Item — the one schema every source normalizes into
-  timeutil.py    UTC in, ISO-8601 out; naive datetimes are refused
-  ids.py         URL canonicalization and stable item ids
-  failure.py     one bounded line per recorded failure
-  relevance.py   cheap keyword pass over titles, tuned for recall
-  dedup.py       fuzzy title clustering with a version veto
-  provenance.py  what kind of evidence a URL is, if any
-  fetcher.py     one polite, cached fetch per URL
-  extract.py     candidate links out of a fetched page
-  resolver.py    source -> URL -> page, in that order
-  substance.py   the rules: does the artifact hold up?
-  github.py      repository facts from the GitHub API
-  papers.py      paper facts from the arXiv API
-  checker.py     dispatches on evidence type to the right gatherer
-  scoring.py     the rubric and the response schema
-  scorer.py      batched model calls, caching, and what they cost
-  digest.py      selection, and email-safe HTML and text
-  mailer.py      one HTTP call to Resend
-  archive.py     JSONL export and rebuild, so state survives a runner
-  stats.py       reading back what the filter decided
-  audit.py       scoring both rule sets against hand labels
-  store.py       SQLite: everything ever seen, including the rejects
-  pipeline.py    fan out, cluster, resolve, check, score, record
-  render.py      the terminal table
-  cli.py         argparse entry point
-  sources/
-    base.py         the Source protocol every ingester implements
-    hn.py           Hacker News via the Algolia search API
-    huggingface.py  daily papers
-    arxiv.py        cs.AI, cs.LG, cs.CL submissions
+  models.py  ids.py  timeutil.py     the common Item shape, stable ids, UTC
+  relevance.py  dedup.py             keyword pass; one story per launch
+  provenance.py  fetcher.py          what a URL is; one polite fetch per page
+  extract.py  resolver.py            links out of a page; source → URL → page
+  substance.py  github.py  papers.py does the artifact hold up?
+  checker.py                         picks the right lookup per evidence type
+  scoring.py  scorer.py              the rubric; batched calls and their cost
+  digest.py  mailer.py               email-safe HTML; one call to Resend
+  store.py  archive.py  stats.py     SQLite, JSONL backup, reading it back
+  pipeline.py  render.py  cli.py     the run itself, the table, the commands
+  failure.py                         one bounded line per recorded failure
+  sources/                           Hacker News, Hugging Face, arXiv
 
-data/     hand-labelled cases the rules are scored against, never machine-written
+data/     hand-labelled cases the rules are scored against
 state/    the JSONL archive a scheduled run commits
-docs/     the build plan, and a rendered sample digest
+docs/     the build plan, and a sample digest
 tests/    671 tests, none of which touch the network
-
-.github/workflows/
-  digest.yml   the 06:30 UTC run
-  ci.yml       lint, tests and the rule audit on every push
 ```
+
+Everything the filter sees is kept — kept stories, duplicates and rejects alike,
+each with its reason. After a month that's a few hundred labelled judgements of
+your own, which is the most interesting thing here. `papertrail stats` reads it
+back.
