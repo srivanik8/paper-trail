@@ -38,37 +38,29 @@ uv sync
 uv run papertrail run --since 24h --no-score
 ```
 
-That fetches the last 24 hours, collapses duplicates, resolves what it can, and
-prints what survived. `--no-score` keeps it free; drop it once you have an
-`ANTHROPIC_API_KEY` set.
+`--no-score` keeps it free. Drop it once you have an `ANTHROPIC_API_KEY` set.
 
 ```
 fetched 47 -> 12 stories (9 new, 3 seen before, 6 folded in, 29 unsourced)
 evidence: paper 5, repo 4, official_blog 2, model_weights 1
-flags: readme_only 1, single_contributor 2, waitlist 1
-thin: 1 of 12
-scored: 1 request, 4080 in, 1400 out, ~$0.0566
 
   SC   SIGNAL  PUBLISHED     SRC     EVID  TITLE
 --------------------------------------------------------------------------------
    8    180.4  06-01 09:00   hn      pape  Sparse autoencoders scale to frontier models
       Sparse autoencoders trained to 34M features on a production model.
-   7    240.7  06-01 09:00   hn      repo  Show HN: a tiny LLM inference runtime in C
-      A 4k-line inference runtime in C with no dependencies, 180 contributors.
  ! 1    913.0  06-01 09:00   hn      repo  AgentOS: the last agent framework you need
       A README and a waitlist link; no implementation in the repository.
 ```
 
-`SC` is the model's 0-10 judgement, `~` marks a story an earlier run already
-reported, `!` marks one whose artifact looks like a launch page, and `EVID` says
-what it can be checked against.
+`SC` is the model's 0-10 score, `!` means the artifact looks like a launch page,
+`EVID` says what the story can be checked against.
 
-Those three rows are the whole idea. The **bottom** one is the most popular item
-of the day by a wide margin — 913 points, 9,100 stars — and its repository is a
-README with a waitlist link. Ranking by popularity prints this list upside down.
+Those two rows are the point. The bottom one was the most popular item of the
+day — 913 points, 9,100 stars — and its repo is empty. Sorting by popularity
+prints this list upside down.
 
-State lives in `papertrail.db` beside you. Run it twice and the second run
-reports nothing new — that is what the database is for.
+Run it twice and the second run reports nothing new. That's what `papertrail.db`
+is for.
 
 ## How to run it
 
