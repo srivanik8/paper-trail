@@ -4,35 +4,30 @@ AI news, filtered by whether it can show its work.
 
 ## About
 
-There is more AI news every morning than anyone can read, and the loudest items
-are reliably not the most substantial. paper-trail pulls from a handful of feeds
-and keeps only the stories it can trace back to something you could go and check
-for yourself: a paper, a repository, published model weights, or a post from the
-lab that actually did the work.
+Too much AI news every morning, and the loudest posts are usually the emptiest.
 
-It is **not** a fake-news detector. No model verifies truth, and pretending
-otherwise is where projects like this fall over. What it does is narrower and
-actually computable — it scores **provenance**: can this claim point at a real
-artifact, does that artifact hold up when you look at it, and did anyone
-independent carry the same story?
+paper-trail reads a few feeds and throws away anything it can't trace back to
+something real — a paper, a code repository, model weights, or a post from the
+lab that actually did the work. Then it looks at that thing: does the repo have
+code in it, or just a README and a waitlist link? Finally a model ranks whatever
+survived, and you get the best handful by email.
 
-That distinction has teeth. On a typical run the highest-scoring item of the day
-gets thrown away — a widely-upvoted post whose repository turns out to be a
-README with a waitlist link — while a quieter announcement survives because its
-blog post links out to an arXiv paper. Everything discarded is kept in the
-database with the reason, so "why didn't I see this?" always has an answer.
+It can't tell you what's true. Nothing can. It can tell you what shows its work.
 
-Five stages, each cheaper than the one after it:
+A typical morning: the day's most-upvoted post gets dropped because its
+"open-source framework" is an empty repo, while a quieter announcement stays
+because it links to a real paper. Everything dropped is kept with the reason,
+so "why didn't I see this?" always has an answer.
 
-| | | |
-|---|---|---|
-| **Ingest** | Hacker News, Hugging Face daily papers, arXiv | one common `Item` shape |
-| **Deduplicate** | URL canonicalization, then fuzzy title clustering | one story per launch |
-| **Resolve** | ask the source, then the URL, then read the page | drops what it cannot trace |
-| **Check** | commit history, contributors, code vs. README | annotates, never drops |
-| **Score** | a model ranks the survivors, given that evidence | the only stage that costs money |
+How it works, in five steps:
 
-It runs itself from GitHub Actions every morning and emails you the result.
+| | |
+|---|---|
+| **Ingest** | Hacker News, Hugging Face daily papers, arXiv |
+| **Deduplicate** | one story per launch, however many feeds carried it |
+| **Resolve** | find the paper or repo behind it — drop what has none |
+| **Check** | is that artifact real? commits, contributors, actual code |
+| **Score** | a model ranks what's left, given all of the above |
 
 ## Quick start
 
