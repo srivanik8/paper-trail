@@ -64,8 +64,6 @@ is for.
 
 ## How to run it
 
-### Day to day
-
 ```bash
 uv run papertrail run --since 24h            # the ranked table
 uv run papertrail digest                     # render to out/digest.html
@@ -74,41 +72,25 @@ uv run papertrail stats --days 30            # what the filter has decided
 uv run papertrail audit                      # score the rules against hand labels
 ```
 
-`run` and `digest` share the pipeline flags: `--since` (`24h`, `90m`, `7d`),
-`--db`, `--model`, and three switches that turn off a stage — `--no-fetch`
-(never read a page), `--no-check` (skip the repository and paper lookups) and
-`--no-score` (skip the model, and the bill). `run` adds `--source`, `--limit`,
-`--json`, `--new-only`, `--keep-unsourced` and `--dry-run`; `digest` adds
-`--out`, `--send`, `--to`, `--min-score`, `--again` and `--empty-ok`.
+`run` and `digest` share `--since`, `--db`, `--model`, and three switches that
+turn off a stage: `--no-fetch` (never read a page), `--no-check` (skip the repo
+and paper lookups), `--no-score` (skip the model, and the bill). `--help` lists
+the rest.
 
-### Every morning, from GitHub Actions
+**Every morning.** `.github/workflows/digest.yml` runs at 06:30 UTC. It needs
+three repository secrets — `ANTHROPIC_API_KEY`, `RESEND_API_KEY`,
+`PAPERTRAIL_TO` — plus `PAPERTRAIL_FROM` if you have verified a sending domain.
 
-`.github/workflows/digest.yml` runs at 06:30 UTC and on demand. It needs three
-repository secrets — `ANTHROPIC_API_KEY`, `RESEND_API_KEY`, `PAPERTRAIL_TO` —
-plus `PAPERTRAIL_FROM` if you have verified a sending domain. `GITHUB_TOKEN` is
-provided automatically and lifts the GitHub API budget from 60 requests an hour
-to 5,000.
-
-An Actions runner is destroyed when the job ends, so `papertrail.db` does not
-survive to the next morning — and without it, deduplication forgets everything
-and the same story arrives every day. `actions/cache` is the obvious fix and the
-wrong one: entries are evicted without warning and the failure is silent. So the
-state is committed to the repository as JSONL and the database is rebuilt from
-it each run:
+An Actions runner is wiped when the job ends, so the database can't live there:
+without it, dedup forgets everything and the same story arrives daily.
+`actions/cache` looks like the fix but entries get evicted silently. So the
+state is committed to the repo as JSONL and rebuilt each run:
 
 ```
 restore  →  run  →  digest  →  send  →  export  →  commit state/
 ```
 
-```bash
-uv run papertrail export     # write state/*.jsonl
-uv run papertrail restore    # rebuild the database from them
-```
-
-The export is sorted by first sighting, so a scheduled run reads as added lines
-in a diff rather than a rewritten file.
-
-### Working on it
+**Working on it.**
 
 ```bash
 uv run pytest                                # 671 tests, no network
@@ -116,10 +98,8 @@ uv run ruff check . && uv run ruff format .
 uv run papertrail audit --min-accuracy 1.0   # what CI gates on
 ```
 
-The suite mocks every outbound call, so it needs no credentials and cannot be
-broken by a third-party API having a bad morning. CI runs the same commands, so
-a regression in either rule set fails the build rather than being noticed a
-month later.
+The suite mocks every outbound call, so it needs no credentials and can't be
+broken by someone else's API having a bad morning.
 
 ## What's in the repo
 
